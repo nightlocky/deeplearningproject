@@ -1,1 +1,6 @@
 data
+src/mlflow.db
+venv
+src/__pycache__
+src/dataLoader/__pycache__
+src/mlruns
