@@ -36,7 +36,7 @@ train_loader, test_loader, normal_idx = get_anomaly_dataloaders(
     test_path=TEST_PATH, 
     img_size=IMG_SIZE,
     n_train_normal = 50000,
-    n_test_normal = 250,
+    n_test_normal = 5000,
     n_test_anomaly=750,
     batch_size=BATCH_SIZE
 )
