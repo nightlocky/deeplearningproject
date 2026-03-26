@@ -10,7 +10,8 @@ def get_anomaly_dataloaders(
     n_test_normal=250, 
     n_test_anomaly=30, 
     img_size=224, 
-    batch_size=32
+    batch_size=32,
+    num_workers=8  # <--- Added this parameter (8 is the sweet spot for 4090s)
 ):
     """
     Creates DataLoaders for Anomaly Detection.

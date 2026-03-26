@@ -1,3 +1,6 @@
+<<<<<<< HEAD
+# Project Master
+=======
 Data Source :
 
 | Dataset | Normal | DRUSEN | DME    | CNV    |
@@ -13,6 +16,6 @@ Data Source :
 | Isolation forest          |      |
 | Vit + isolation forest    |      |
 | resnet + isolation forest |      |
-| swin transformer          |      |
-|                           |      |
-|                           |      |
+| patchcore  + autoencoder        |      |
+|             |      |
+|                           |      
