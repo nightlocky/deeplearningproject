@@ -105,7 +105,7 @@ with tracker as run:
         "backbone": "vit_b_16_pretrained",
         "ae_bottleneck": 64,
         "epochs": EPOCHS,
-        "threshold_method": "F1-Optimization" # <-- Updated parameter tracking
+        "threshold_method": "F1-Optimization"
     })
 
     print("\nTraining Autoencoder...")
