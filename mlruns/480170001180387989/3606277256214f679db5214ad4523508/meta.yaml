@@ -1,0 +1,14 @@
+artifact_uri: file:///C:\Users\user\deeplearningproject\mlruns/480170001180387989/3606277256214f679db5214ad4523508/artifacts
+end_time: null
+entry_point_name: ''
+experiment_id: '480170001180387989'
+lifecycle_stage: active
+run_id: 3606277256214f679db5214ad4523508
+run_name: melodic-trout-253
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1774685978225
+status: 1
+tags: []
+user_id: user

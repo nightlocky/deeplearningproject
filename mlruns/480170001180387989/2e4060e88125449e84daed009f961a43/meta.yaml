@@ -1,0 +1,14 @@
+artifact_uri: file:///C:\Users\user\deeplearningproject\mlruns/480170001180387989/2e4060e88125449e84daed009f961a43/artifacts
+end_time: 1774688553941
+entry_point_name: ''
+experiment_id: '480170001180387989'
+lifecycle_stage: active
+run_id: 2e4060e88125449e84daed009f961a43
+run_name: fortunate-vole-244
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1774688553824
+status: 3
+tags: []
+user_id: user

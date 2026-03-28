@@ -1,0 +1,14 @@
+artifact_uri: file:///C:\Users\user\deeplearningproject\mlruns/480170001180387989/8d80fd3bb3054c8e9b0b9f7cc84683f3/artifacts
+end_time: null
+entry_point_name: ''
+experiment_id: '480170001180387989'
+lifecycle_stage: active
+run_id: 8d80fd3bb3054c8e9b0b9f7cc84683f3
+run_name: painted-sow-289
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1774690205023
+status: 1
+tags: []
+user_id: user

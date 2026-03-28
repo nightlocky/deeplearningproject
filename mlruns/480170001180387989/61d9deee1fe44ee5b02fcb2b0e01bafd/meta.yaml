@@ -1,0 +1,14 @@
+artifact_uri: file:///C:\Users\user\deeplearningproject\mlruns/480170001180387989/61d9deee1fe44ee5b02fcb2b0e01bafd/artifacts
+end_time: 1774685989219
+entry_point_name: ''
+experiment_id: '480170001180387989'
+lifecycle_stage: active
+run_id: 61d9deee1fe44ee5b02fcb2b0e01bafd
+run_name: big-lark-212
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1774685989132
+status: 3
+tags: []
+user_id: user
