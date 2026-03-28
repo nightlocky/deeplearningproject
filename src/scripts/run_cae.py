@@ -14,6 +14,7 @@ from src.visualization_helper import (
 )
 from src.mlflow_helper import MLFlowTracker
 from src.models.cae import ConvAutoencoder
+from src.config import TRAIN_PATH, TEST_PATH
 
 
 # ---------------------------------------------------------
@@ -35,27 +36,15 @@ def main():
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using device:", DEVICE)
 
-    # ---------------------------------------------------------
-    # Project root
-    # ---------------------------------------------------------
-    project_root = os.path.dirname(
-        os.path.dirname(
-            os.path.dirname(os.path.abspath(__file__))
-        )
-    )
-
-    train_path = os.path.join(project_root, 'data', 'OCT', 'train')
-    test_path = os.path.join(project_root, 'data', 'OCT', 'test')
-
-    print("Train path:", train_path)
-    print("Exists?", os.path.exists(train_path))
+    print("Train path:", TRAIN_PATH)
+    print("Exists?", os.path.exists(TRAIN_PATH))
 
     # ---------------------------------------------------------
     # 2. Data
     # ---------------------------------------------------------
     train_loader, test_loader, normal_idx = get_anomaly_dataloaders(
-        train_path=train_path,
-        test_path=test_path,
+        train_path=TRAIN_PATH,
+        test_path=TEST_PATH,
         img_size=CONFIG["img_size"],
         n_train_normal=CONFIG["n_train_normal"],
         n_test_normal=CONFIG["n_test_normal"],

@@ -22,13 +22,12 @@ from visualization_helper import (
     plot_error_distribution # Useful for showing IF anomaly scores
 )
 from mlflow_helper import MLFlowTracker
+from config import TRAIN_PATH, TEST_PATH
 
 # ---------------------------------------------------------
 # 1. Configuration & Data Loading
 # ---------------------------------------------------------
-# Robust paths relative to project root
-TRAIN_PATH = os.path.join(project_root, 'data', 'OCT', 'train')
-TEST_PATH = os.path.join(project_root, 'data', 'OCT', 'test')
+# Paths are controlled centrally in src/config.py
 IMG_SIZE = 224 # ResNet default
 BATCH_SIZE = 32
 
