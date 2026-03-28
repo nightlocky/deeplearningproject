@@ -1,0 +1,14 @@
+artifact_uri: file:///C:\Users\user\deeplearningproject\mlruns/480170001180387989/af36d1644d1c4c81a3fb5ec88569c94f/artifacts
+end_time: null
+entry_point_name: ''
+experiment_id: '480170001180387989'
+lifecycle_stage: active
+run_id: af36d1644d1c4c81a3fb5ec88569c94f
+run_name: clean-panda-340
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1774688688356
+status: 1
+tags: []
+user_id: user

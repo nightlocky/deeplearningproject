@@ -1,0 +1,14 @@
+artifact_uri: file:///C:\Users\user\deeplearningproject\mlruns/480170001180387989/7e1c556ee8234f1792154f977799b7e9/artifacts
+end_time: 1774688695766
+entry_point_name: ''
+experiment_id: '480170001180387989'
+lifecycle_stage: active
+run_id: 7e1c556ee8234f1792154f977799b7e9
+run_name: suave-turtle-910
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1774688695712
+status: 3
+tags: []
+user_id: user

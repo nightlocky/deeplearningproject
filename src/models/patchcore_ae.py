@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torchvision import models
-import torch.nn.functional as F
+import torch.nn.fugit nctional as F
 import numpy as np
 from sklearn.metrics import classification_report, confusion_matrix, precision_recall_fscore_support
 from sklearn.model_selection import train_test_split
@@ -21,13 +21,12 @@ sys.path.append(parent_dir)
 from dataLoader.dataLoader import get_anomaly_dataloaders
 from visualization_helper import plot_loss, plot_error_distribution, plot_confusion_matrix_custom
 from mlflow_helper import MLFlowTracker
+from config import TRAIN_PATH, TEST_PATH
 
 # ---------------------------------------------------------
 # 1. Configuration & Data Loading (WORKSPACE SAFE)
 # ---------------------------------------------------------
-# Reverted to your original workspace paths
-TRAIN_PATH = os.path.join(project_root, 'data', 'OCT', 'train')
-TEST_PATH = os.path.join(project_root, 'data', 'OCT', 'test')
+# Paths are controlled centrally in src/config.py
 
 IMG_SIZE = 224
 BATCH_SIZE = 128 # The sweet spot for the RunPod Network Drive
