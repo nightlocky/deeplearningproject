@@ -1,3 +1,7 @@
+from tqdm import tqdm
+import numpy as np
+import torch    
+
 def train_autoencoder(model, train_loader, optimizer, criterion, device, epochs, tracker=None):
     model.train()
     train_losses = []

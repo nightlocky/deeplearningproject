@@ -1,0 +1,14 @@
+artifact_uri: file:///C:\Users\user\deeplearningproject\mlruns/961114285498722984/c262fde4e61c40b898a780b5d9eede7a/artifacts
+end_time: 1774852036939
+entry_point_name: ''
+experiment_id: '961114285498722984'
+lifecycle_stage: active
+run_id: c262fde4e61c40b898a780b5d9eede7a
+run_name: dapper-trout-511
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1774851594893
+status: 3
+tags: []
+user_id: user
