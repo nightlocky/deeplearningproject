@@ -4,6 +4,7 @@ venv
 src/__pycache__
 src/dataLoader/__pycache__
 src/mlruns
+mlruns
 connect.bat
 dl_env
 src/scripts/__pycache__
