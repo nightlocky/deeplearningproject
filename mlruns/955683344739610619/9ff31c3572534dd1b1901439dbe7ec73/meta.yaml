@@ -1,0 +1,14 @@
+artifact_uri: file:///workspace/mlruns/955683344739610619/9ff31c3572534dd1b1901439dbe7ec73/artifacts
+end_time: 1774868796746
+entry_point_name: ''
+experiment_id: '955683344739610619'
+lifecycle_stage: active
+run_id: 9ff31c3572534dd1b1901439dbe7ec73
+run_name: righteous-midge-565
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1774868585080
+status: 3
+tags: []
+user_id: root
