@@ -1,0 +1,14 @@
+artifact_uri: file:///workspace/mlruns/396173950337296118/de52e7a2d4dd41af8f598e8f9c9c9a79/artifacts
+end_time: 1774886884927
+entry_point_name: ''
+experiment_id: '396173950337296118'
+lifecycle_stage: active
+run_id: de52e7a2d4dd41af8f598e8f9c9c9a79
+run_name: gifted-ox-5
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1774886726509
+status: 3
+tags: []
+user_id: root

@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
 import segmentation_models_pytorch as smp
 from sklearn.metrics import classification_report, confusion_matrix, precision_recall_fscore_support
 from sklearn.model_selection import train_test_split
@@ -11,7 +13,10 @@ from torch.utils.data import TensorDataset, DataLoader
 from tqdm import tqdm
 from torchmetrics.functional import structural_similarity_index_measure as ssim
 
-# Import Config and Helpers
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(parent_dir)
+
 import config
 from dataLoader.dataLoader import dataloader
 from helper.visualization_helper import (
@@ -20,20 +25,27 @@ from helper.visualization_helper import (
     plot_confusion_matrix
 )
 from helper.mlflow_helper import MLFlowTracker
+# Updated import to match your new file location
+from helper.EarlyStopping import EarlyStopping 
 
+# ---------------------------------------------------------
+# 0. Global Settings & Params
+# ---------------------------------------------------------
 MODEL_NAME = "unet_resnet34_autoencoder"
-EPOCHS = 10
+EPOCHS = 50 
 RUN_PARAMS = {
     "backbone": "UNet_ResNet34_Pretrained",
     "encoder_weights": "imagenet",
     "epochs": EPOCHS,
-    "encoder_lr": 1e-4,  # Lower LR so we don't destroy ImageNet weights
-    "decoder_lr": 1e-3,  # Standard LR for learning to build the OCT scan
+    "encoder_lr": 1e-4,  
+    "decoder_lr": 1e-3,  
     "loss_type": "Pure_SSIM_Pixels",
     "batch_size": config.BATCH_SIZE, 
     "image_size": config.IMG_SIZE,
     "seed": config.RANDOM_SEED
 }
+
+sns.set_theme(style="whitegrid")
 
 # ---------------------------------------------------------
 # 1. Data Loading
@@ -56,18 +68,16 @@ train_loader, test_loader, normal_idx = dataloader(
 # ---------------------------------------------------------
 print("Loading Pretrained U-Net (ResNet34) Autoencoder...")
 
-# Use SMP to generate the U-Net architecture
 ae_model = smp.Unet(
-    encoder_name="resnet34",        
-    encoder_weights="imagenet",     
-    in_channels=3,                  
-    classes=3,                      # Output needs 3 channels to match input image
-    activation="sigmoid"            # Force output to [0, 1] range for valid SSIM calculation
+    encoder_name="resnet34",         
+    encoder_weights="imagenet",      
+    in_channels=3,                   
+    classes=3,                       
+    activation="sigmoid"             
 ).to(config.DEVICE)
 
 ae_model = torch.compile(ae_model) 
 
-# Differential Learning Rates: Group parameters into encoder vs. rest
 encoder_params = list(ae_model.encoder.parameters())
 decoder_params = list(ae_model.decoder.parameters()) + list(ae_model.segmentation_head.parameters())
 
@@ -76,10 +86,15 @@ optimizer = optim.Adam([
     {'params': decoder_params, 'lr': RUN_PARAMS["decoder_lr"]}
 ])
 
+# Initialize Training Utilities
+best_model_path = os.path.join(config.PROJECT_ROOT, f"{MODEL_NAME}_best.pth")
+early_stopping = EarlyStopping(patience=5, path=best_model_path)
+scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
+
 scaler = torch.amp.GradScaler('cuda') 
 
 # ---------------------------------------------------------
-# 4. Training Loop (Pure SSIM Loss on Pixels)
+# 4. Training Loop
 # ---------------------------------------------------------
 tracker = MLFlowTracker(experiment_name="unet_autoencoder_image")
 
@@ -91,7 +106,7 @@ with tracker as run:
     for epoch in range(EPOCHS):
         ae_model.train()
         batch_losses = []
-        for imgs, _ in train_loader:
+        for imgs, _ in tqdm(train_loader, desc=f"Epoch [{epoch+1}/{EPOCHS}]"):
             imgs = imgs.to(config.DEVICE, non_blocking=True)
             optimizer.zero_grad(set_to_none=True)
             
@@ -104,13 +119,27 @@ with tracker as run:
             scaler.update()
             batch_losses.append(ssim_loss.item())
             
-        train_losses.append(np.mean(batch_losses))
+        epoch_loss = np.mean(batch_losses)
+        train_losses.append(epoch_loss)
+        
+        # Update Scheduler and Early Stopping
+        scheduler.step(epoch_loss)
+        # This triggers the __call__ method in your EarlyStopping class
+        early_stopping(epoch_loss, ae_model)
+        
         if (epoch + 1) % 5 == 0:
-            print(f"Epoch [{epoch+1}/{EPOCHS}] Loss (SSIM): {train_losses[-1]:.6f}")
+            print(f"Epoch [{epoch+1}/{EPOCHS}] Loss (SSIM): {epoch_loss:.6f}")
+            
+        if early_stopping.early_stop:
+            print(f"Early Stopping triggered. Halting training.")
+            break
 
     # ---------------------------------------------------------
-    # 5. Threshold Optimization
+    # 5. Load Best Weights & Evaluation
     # ---------------------------------------------------------
+    print("\nLoading Best Weights for Final Evaluation...")
+    # This loads the .pth file that EarlyStopping saved automatically
+    ae_model.load_state_dict(torch.load(best_model_path)) 
     ae_model.eval()
     
     def get_ssim_errors(loader, desc):
@@ -126,16 +155,12 @@ with tracker as run:
                 labels.extend(lbls.numpy())
         return np.array(sample_errors), np.array(labels)
 
-    print("\nCalculating SSIM Errors...")
-    train_errors, _ = get_ssim_errors(train_loader, "Train Set")
-    all_test_errors, test_labels_raw = get_ssim_errors(test_loader, "Test Set")
+    train_errors, _ = get_ssim_errors(train_loader, "Train Errors")
+    all_test_errors, test_labels_raw = get_ssim_errors(test_loader, "Test Errors")
     y_true_all = np.array([0 if l == normal_idx else 1 for l in test_labels_raw])
 
     val_errs, test_errs, val_lbls, test_lbls = train_test_split(
-        all_test_errors, y_true_all, 
-        test_size=0.5, 
-        stratify=y_true_all, 
-        random_state=config.RANDOM_SEED
+        all_test_errors, y_true_all, test_size=0.5, stratify=y_true_all, random_state=config.RANDOM_SEED
     )
 
     thresholds = np.linspace(val_errs.min(), val_errs.max(), 1000)
@@ -150,7 +175,7 @@ with tracker as run:
     precision, recall, f1, _ = precision_recall_fscore_support(test_lbls, test_preds, average='binary')
     
     # ---------------------------------------------------------
-    # 6. Logging & Standard Visuals
+    # 6. Logging & Visuals
     # ---------------------------------------------------------
     l_p = plot_loss(train_losses, "ae_loss.png", MODEL_NAME)
     cm_p = plot_confusion_matrix(
@@ -167,65 +192,72 @@ with tracker as run:
     tracker.log_artifact(l_p)
     tracker.log_artifact(cm_p)
     tracker.log_artifact(d_p)
-
-    tracker.log_metrics({
-        "precision": float(precision), 
-        "recall": float(recall), 
-        "f1": float(f1),
-        "threshold": float(best_thresh)
-    })
+    tracker.log_metrics({"test_f1": float(f1), "optimal_threshold": float(best_thresh)})
     
     # ---------------------------------------------------------
-    # 7. Deep Analysis: Model-Specific Heatmap Generation
+    # 7. Specialized Heatmap Generator
+    # ---------------------------------------------------------
+# ---------------------------------------------------------
+    # 7. Specialized Heatmap Generator
     # ---------------------------------------------------------
     print("\nGenerating Deep Analysis Heatmaps...")
     
-    # 1. Collect all raw images
-    all_raw_images = []
-    for imgs, _ in test_loader:
-        all_raw_images.append(imgs)
-    all_raw_tensor = torch.cat(all_raw_images)
-    
-    # 2. Identify Top 10 Hits and Worst 10 Misses
-    anomaly_indices = np.where(y_true_all == 1)[0]
-    anom_scores = all_test_errors[anomaly_indices]
-    
-    top_hits = anomaly_indices[np.argsort(anom_scores)[-10:][::-1]]
-    top_miss = anomaly_indices[np.argsort(anom_scores)[:10]]
-
-    # 3. Define the local generator tailored explicitly for THIS image model
     def generate_local_heatmaps(indices, title, filename):
         if len(indices) == 0: return None
-        
-        ae_model.eval()
+        all_raw_images = []
+        for imgs, _ in test_loader: all_raw_images.append(imgs)
+        all_raw_tensor = torch.cat(all_raw_images)
+
         with torch.no_grad():
-            # OPTIMIZATION: Extract only the 10 images we need, saving massive GPU RAM
             subset_imgs = all_raw_tensor[indices].to(config.DEVICE)
             subset_recons = ae_model(subset_imgs).cpu().numpy()
             subset_origs = subset_imgs.cpu().numpy()
             subset_scores = all_test_errors[indices]
             
-            # Since we sliced the array, the new indices for the plotter are simply 0 to N
-            local_indices = np.arange(len(indices))
+        num_imgs = len(indices)
+        fig, axes = plt.subplots(num_imgs, 3, figsize=(15, 5 * num_imgs))
+        if num_imgs == 1: axes = [axes]
             
-            # Pass to the universal drawing tool
-            return plot_anomaly_comparison(
-                orig_imgs=subset_origs, 
-                recon_imgs=subset_recons, 
-                scores=subset_scores, 
-                indices=local_indices, 
-                title=title, 
-                filename=filename, 
-                model_name=MODEL_NAME
-            )
+        for i in range(num_imgs):
+            orig = np.transpose(subset_origs[i], (1, 2, 0))
+            recon = np.transpose(subset_recons[i], (1, 2, 0))
+            heatmap = np.mean(np.abs(orig - recon), axis=-1) 
+            
+            axes[i][0].imshow(np.clip(orig, 0, 1))
+            axes[i][0].axis('off')
+            axes[i][1].imshow(np.clip(recon, 0, 1))
+            axes[i][1].axis('off')
+            sns.heatmap(heatmap, ax=axes[i][2], cmap='rocket', cbar=True)
+            axes[i][2].axis('off')
+            
+        plt.tight_layout()
+        target_dir = os.path.join(config.GRAPHS_DIR, MODEL_NAME)
+        os.makedirs(target_dir, exist_ok=True)
+        final_path = os.path.join(target_dir, filename)
+        plt.savefig(final_path, bbox_inches='tight', dpi=150)
+        plt.close(fig)
+        return final_path
 
-    # 4. Generate and Log
-    path_hits = generate_local_heatmaps(top_hits, "Top 10 Correctly Identified Anomalies", "heatmaps_best_hits.png")
-    path_miss = generate_local_heatmaps(top_miss, "Top 10 Missed Anomalies (False Negatives)", "heatmaps_worst_misses.png")
+    # Identify indices where the true label is Anomaly (1)
+    anomaly_indices = np.where(y_true_all == 1)[0]
+    anom_scores = all_test_errors[anomaly_indices]
+    
+    # Sort anomaly scores
+    sorted_idx = np.argsort(anom_scores)
+    
+    # 10 Best: Highest scores (Top of the list, reversed)
+    top_hits = anomaly_indices[sorted_idx[-10:][::-1]]
+    
+    # 10 Worst: Lowest scores (Bottom of the list)
+    top_miss = anomaly_indices[sorted_idx[:10]]
+    
+    # Generate and log both sets
+    path_hits = generate_local_heatmaps(top_hits, "Top 10 Correct Identifications", "heatmaps_hits.png")
+    path_miss = generate_local_heatmaps(top_miss, "Top 10 Worst Misses (False Negatives)", "heatmaps_misses.png")
     
     tracker.log_artifact(path_hits)
     tracker.log_artifact(path_miss)
     
-    torch.save(ae_model.state_dict(), os.path.join(config.PROJECT_ROOT, "image_ae_model.pth"))
     print("\n" + "="*30)
+    print("FINAL TEST PERFORMANCE (Using Best Checkpoint)")
     print(classification_report(test_lbls, test_preds, target_names=['Normal', 'Anomaly']))

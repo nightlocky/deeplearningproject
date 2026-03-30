@@ -27,8 +27,8 @@ class MLFlowTracker:
     def log_params(self, params):
         mlflow.log_params(params)
 
-    def log_metric(self, key, value, step=None):
-        mlflow.log_metric(key, value, step=step)
+    def log_metrics(self, metrics_dict, step=None):
+            mlflow.log_metrics(metrics_dict, step=step)
 
     def log_artifact(self, local_path):
         if os.path.exists(local_path):
@@ -40,7 +40,7 @@ class MLFlowTracker:
         mlflow.pytorch.log_model(model, artifact_path)
 
     def __enter__(self):
-        self.start_run()
+        self.start_run()   
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):

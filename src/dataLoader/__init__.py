@@ -1,1 +1,1 @@
-from .dataLoader import get_anomaly_dataloaders
+from .dataLoader import dataloader
