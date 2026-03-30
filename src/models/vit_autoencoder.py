@@ -23,7 +23,7 @@ from helper.visualization_helper import (
     plot_loss, 
     plot_error_distribution, 
     plot_confusion_matrix, 
-    generate_anomaly_analysis # New Universal Function
+    generate_anomaly_analysis
 )
 from helper.mlflow_helper import MLFlowTracker
 
@@ -109,7 +109,7 @@ ae_train_loader = DataLoader(TensorDataset(train_feats_tensor), batch_size=confi
 # ---------------------------------------------------------
 # 4. Training Loop (Pure SSIM Loss)
 # ---------------------------------------------------------
-tracker = MLFlowTracker(experiment_name="ViT_Autoencoder_SSIM")
+tracker = MLFlowTracker(experiment_name="ViT_Autoencoder")
 
 with tracker as run:
     tracker.log_params(RUN_PARAMS)
