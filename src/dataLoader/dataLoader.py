@@ -10,7 +10,8 @@ def get_anomaly_dataloaders(
     n_test_normal=250, 
     n_test_anomaly=30, 
     img_size=224, 
-    batch_size=32
+    batch_size=32,
+    num_workers=16 
 ):
     """
     Creates DataLoaders for Anomaly Detection.
@@ -44,15 +45,29 @@ def get_anomaly_dataloaders(
     test_anom_idx = get_indices(full_test_ds, is_normal=False)
 
     # 3. Create Subsets with requested sizes
-    # Safety: slice only up to the available length
     train_subset = Subset(full_train_ds, train_norm_idx[:n_train_normal])
     
     test_combined_idx = test_norm_idx[:n_test_normal] + test_anom_idx[:n_test_anomaly]
     test_subset = Subset(full_test_ds, test_combined_idx)
 
-    # 4. Wrap in Loaders
-    train_loader = DataLoader(train_subset, batch_size=batch_size, shuffle=True)
-    test_loader = DataLoader(test_subset, batch_size=batch_size, shuffle=False)
+    # 4. Wrap in Loaders (UPDATED FOR GPU)
+    train_loader = DataLoader(
+        train_subset, 
+        batch_size=batch_size, 
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=True,         
+        persistent_workers=True
+    )
+    
+    test_loader = DataLoader(
+        test_subset, 
+        batch_size=batch_size, 
+        shuffle=False,
+        num_workers=num_workers, 
+        pin_memory=True,         
+        persistent_workers=True
+    )
 
     print(f"--- Data Summary ---")
     print(f"Training on: {len(train_subset)} Normal images")

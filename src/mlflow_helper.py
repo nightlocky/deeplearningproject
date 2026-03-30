@@ -6,23 +6,30 @@ class MLFlowTracker:
     def __init__(self, experiment_name="OCT_Anomaly_Detection_Separated"):
         self.experiment_name = experiment_name
         
-        # Set tracking URI to ensure mlruns is in the project root
-        # This makes it easier to run 'mlflow ui' from the root folder
-        root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        mlruns_dir = os.path.join(root_dir, "mlruns")
+        # ---------------------------------------------------------
+        # THE FIX: Hard-coded absolute path for RunPod Workspace
+        # ---------------------------------------------------------
+        mlruns_dir = "/workspace/mlruns"
         
+        # Ensure the directory exists
         if not os.path.exists(mlruns_dir):
             os.makedirs(mlruns_dir, exist_ok=True)
             
-        mlflow.set_tracking_uri(f"file:///{mlruns_dir}")
+        # Set the tracking URI using the absolute path
+        # 'file:' is the standard prefix for local Linux paths in MLflow
+        mlflow.set_tracking_uri(f"file:{mlruns_dir}")
+        
+        # Set the experiment
         mlflow.set_experiment(self.experiment_name)
         self.active_run = None
 
     def start_run(self, run_name=None):
+        """Starts a new MLflow run."""
         self.active_run = mlflow.start_run(run_name=run_name)
         return self.active_run
 
     def end_run(self):
+        """Ends the active MLflow run."""
         if self.active_run:
             mlflow.end_run()
             self.active_run = None

@@ -1,0 +1,7 @@
+artifact_location: file:///workspace/mlruns/955683344739610619
+creation_time: 1774861126214
+experiment_id: '955683344739610619'
+last_update_time: 1774861126214
+lifecycle_stage: active
+name: ViT_Autoencoder
+workspace: default
