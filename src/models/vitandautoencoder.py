@@ -133,45 +133,93 @@ with tracker as run:
     # ---------------------------------------------------------
     # 5. Validation Split & Dynamic Threshold Optimization
     # ---------------------------------------------------------
-    ae_model.eval()
-    print("\nEvaluating and finding optimal threshold...")
+    # ae_model.eval()
+    # print("\nEvaluating and finding optimal threshold...")
     
-    def get_reconstruction_errors(feature_tensor):
-        with torch.no_grad():
-            feats = feature_tensor.to(DEVICE)
-            recon = ae_model(feats)
-            errors = torch.mean((feats - recon)**2, dim=1).cpu().numpy()
-        return errors
+    # def get_reconstruction_errors(feature_tensor):
+    #     with torch.no_grad():
+    #         feats = feature_tensor.to(DEVICE)
+    #         recon = ae_model(feats)
+    #         errors = torch.mean((feats - recon)**2, dim=1).cpu().numpy()
+    #     return errors
 
-    train_errors = get_reconstruction_errors(train_feats_tensor)
-    all_test_errors = get_reconstruction_errors(test_feats_tensor)
+    # train_errors = get_reconstruction_errors(train_feats_tensor)
+    # all_test_errors = get_reconstruction_errors(test_feats_tensor)
 
-    # Ground truth: 0 for Normal, 1 for Anomaly
-    y_true_all = np.array([0 if l == normal_idx else 1 for l in test_labels_raw])
+    # # Ground truth: 0 for Normal, 1 for Anomaly
+    # y_true_all = np.array([0 if l == normal_idx else 1 for l in test_labels_raw])
 
-    # SPLIT the test data into Validation (for finding the line) and Test (for the final grade)
-    val_errs, test_errs, val_lbls, test_lbls = train_test_split(
-        all_test_errors, y_true_all, test_size=0.5, stratify=y_true_all, random_state=42
-    )
+    # # SPLIT the test data into Validation (for finding the line) and Test (for the final grade)
+    # val_errs, test_errs, val_lbls, test_lbls = train_test_split(
+    #     all_test_errors, y_true_all, test_size=0.5, stratify=y_true_all, random_state=42
+    # )
 
-    print("Running F1-Maximization on Validation Set...")
+    # print("Running F1-Maximization on Validation Set...")
+    # best_thresh = 0
+    # best_f1 = 0
+    
+    # # Test 1,000 different possible lines between the lowest and highest validation error
+    # thresholds_to_test = np.linspace(val_errs.min(), val_errs.max(), 1000)
+    
+    # for t in thresholds_to_test:
+    #     temp_preds = (val_errs > t).astype(int)
+    #     _, _, f1, _ = precision_recall_fscore_support(val_lbls, temp_preds, average='binary', zero_division=0)
+        
+    #     if f1 > best_f1:
+    #         best_f1 = f1
+    #         best_thresh = t
+
+    # tracker.log_metric("optimal_threshold", best_thresh)
+    # print(f"Optimal Threshold Found: {best_thresh:.6f} (Validation F1: {best_f1:.4f})")
+    print("Running Threshold Optimization with Precision Constraint...")
+
     best_thresh = 0
     best_f1 = 0
-    
-    # Test 1,000 different possible lines between the lowest and highest validation error
+    best_precision = 0
+    best_recall = 0
+
     thresholds_to_test = np.linspace(val_errs.min(), val_errs.max(), 1000)
-    
+
+    MIN_PRECISION = 0.90  # you can tune this (0.85–0.95)
+
     for t in thresholds_to_test:
         temp_preds = (val_errs > t).astype(int)
-        _, _, f1, _ = precision_recall_fscore_support(val_lbls, temp_preds, average='binary', zero_division=0)
-        
-        if f1 > best_f1:
-            best_f1 = f1
-            best_thresh = t
+
+        precision, recall, f1, _ = precision_recall_fscore_support(
+            val_lbls, temp_preds, average='binary', zero_division=0
+        )
+
+        # Only consider thresholds that satisfy precision constraint
+        if precision >= MIN_PRECISION:
+            if f1 > best_f1:
+                best_f1 = f1
+                best_thresh = t
+                best_precision = precision
+                best_recall = recall
+
+    # Fallback if no threshold satisfies precision condition
+    if best_thresh == 0:
+        print("No threshold met precision constraint, falling back to best F1")
+
+        for t in thresholds_to_test:
+            temp_preds = (val_errs > t).astype(int)
+
+            precision, recall, f1, _ = precision_recall_fscore_support(
+                val_lbls, temp_preds, average='binary', zero_division=0
+            )
+
+            if f1 > best_f1:
+                best_f1 = f1
+                best_thresh = t
+                best_precision = precision
+                best_recall = recall
 
     tracker.log_metric("optimal_threshold", best_thresh)
-    print(f"Optimal Threshold Found: {best_thresh:.6f} (Validation F1: {best_f1:.4f})")
 
+    print(f"\nOptimal Threshold Found: {best_thresh:.6f}")
+    print(f"Validation Precision: {best_precision:.4f}")
+    print(f"Validation Recall: {best_recall:.4f}")
+    print(f"Validation F1: {best_f1:.4f}")
     # ---------------------------------------------------------
     # 6. Final Evaluation on Unseen Test Set
     # ---------------------------------------------------------
