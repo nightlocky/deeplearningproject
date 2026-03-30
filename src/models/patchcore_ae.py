@@ -6,7 +6,15 @@ import torch.optim as optim
 from torchvision import models
 import torch.nn.fugit nctional as F
 import numpy as np
-from sklearn.metrics import classification_report, confusion_matrix, precision_recall_fscore_support
+from sklearn.metrics import (
+    classification_report, 
+    confusion_matrix, 
+    precision_recall_fscore_support,
+    roc_auc_score,
+    average_precision_score,
+    roc_curve,
+    precision_recall_curve
+)
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 from tqdm import tqdm

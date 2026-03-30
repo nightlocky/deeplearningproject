@@ -6,7 +6,15 @@ import numpy as np
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms, models
 from sklearn.ensemble import IsolationForest
-from sklearn.metrics import classification_report, confusion_matrix, precision_recall_fscore_support
+from sklearn.metrics import (
+    classification_report, 
+    confusion_matrix, 
+    precision_recall_fscore_support,
+    roc_auc_score,
+    average_precision_score,
+    roc_curve,
+    precision_recall_curve
+)
 import matplotlib.pyplot as plt
 
 # Ensure the parent directory (src) and current directory are in the path for local imports

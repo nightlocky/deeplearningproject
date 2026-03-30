@@ -4,7 +4,15 @@ import torch
 import torch.nn as nn
 import numpy as np
 from torchvision import models
-from sklearn.metrics import classification_report, confusion_matrix, precision_recall_fscore_support
+from sklearn.metrics import (
+    classification_report, 
+    confusion_matrix, 
+    precision_recall_fscore_support,
+    roc_auc_score,
+    average_precision_score,
+    roc_curve,
+    precision_recall_curve
+)
 import matplotlib.pyplot as plt
 
 # Ensure the parent directory (src) and its data subdirectory are in the path for local imports
