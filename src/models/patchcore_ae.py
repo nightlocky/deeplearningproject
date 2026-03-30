@@ -20,7 +20,7 @@ sys.path.append(parent_dir)
 # Import Config and Helpers
 import config
 from dataLoader.dataLoader import dataloader
-from helper.visualization_helper import plot_loss, plot_error_distribution, plot_confusion_matrix
+from helper.visualization_helper import plot_loss, plot_error_distribution, plot_confusion_matrix, plot_anomaly_comparison
 from helper.mlflow_helper import MLFlowTracker
 
 MODEL_NAME = "patchcore_ae"
@@ -29,7 +29,7 @@ RUN_PARAMS = {
     "backbone": "resnet18_layer2_layer3",
     "encoder_params": "[384, 128, 64]",
     "decoder_params": "[64, 128, 384]",
-    "epochs": 20,
+    "epochs": EPOCHS,
     "learning_rate": 0.001,
     "loss_type": "Pure_SSIM",
     "batch_size": config.BATCH_SIZE, 
@@ -163,7 +163,6 @@ with tracker as run:
             r2d = torch.clamp(recon, 0, 1)
             f2d = torch.clamp(feats, 0, 1)
             
-            # Calculate error per image
             sample_errors = []
             for i in range(r2d.shape[0]):
                 val = ssim(r2d[i:i+1], f2d[i:i+1], data_range=1.0)
@@ -222,4 +221,45 @@ with tracker as run:
     
     torch.save(ae_model.state_dict(), os.path.join(config.PROJECT_ROOT, "patchcore_ae_model.pth"))
     
+    # ---------------------------------------------------------
+    # 7. Deep Analysis: Heatmaps of Top 10 & Worst 10
+    # ---------------------------------------------------------
+    print("\nGenerating Heatmap Comparisons...")
+    
+    raw_images_tensor = next(iter(DataLoader(test_loader.dataset, batch_size=len(test_loader.dataset))))[0]
+    
+    with torch.no_grad():
+        # Get reconstructions for the full test set
+        recon_features = ae_model(test_feats_tensor.to(config.DEVICE))
+        
+        # Calculate spatial squared error [B, 1, 28, 28]
+        spatial_error = torch.mean((test_feats_tensor.to(config.DEVICE) - recon_features)**2, dim=1, keepdim=True)
+        
+        # Interpolate error heatmap up to 224x224 to match original pixels
+        upscaled_error = F.interpolate(spatial_error, size=(config.IMG_SIZE, config.IMG_SIZE), mode='bilinear')
+        test_recons = upscaled_error.cpu().numpy()
+    
+    raw_images = raw_images_tensor.numpy()
+    
+    anomaly_mask = (y_true_all == 1)
+    anom_scores = all_test_errors[anomaly_mask]
+    real_indices = np.where(anomaly_mask)[0]
+    
+    top_hits_sub_idx = np.argsort(anom_scores)[-10:][::-1]
+    top_hits_indices = real_indices[top_hits_sub_idx]
+    
+    top_miss_sub_idx = np.argsort(anom_scores)[:10]
+    top_miss_indices = real_indices[top_miss_sub_idx]
+    
+    plot_anomaly_comparison(
+        raw_images, test_recons, all_test_errors, top_hits_indices,
+        "Top 10 Correctly Identified Anomalies", "heatmaps_best_hits.png", MODEL_NAME
+    )
+    
+    plot_anomaly_comparison(
+        raw_images, test_recons, all_test_errors, top_miss_indices,
+        "Top 10 Missed Anomalies (False Negatives)", "heatmaps_worst_misses.png", MODEL_NAME
+    )
+
+    print("\n" + "="*30)
     print(classification_report(test_lbls, test_preds, target_names=['Normal', 'Anomaly']))

@@ -19,7 +19,12 @@ sys.path.append(parent_dir)
 # Import Config and Helpers
 import config
 from dataLoader.dataLoader import dataloader
-from helper.visualization_helper import plot_loss, plot_error_distribution, plot_confusion_matrix
+from helper.visualization_helper import (
+    plot_loss, 
+    plot_error_distribution, 
+    plot_confusion_matrix, 
+    generate_anomaly_analysis # New Universal Function
+)
 from helper.mlflow_helper import MLFlowTracker
 
 MODEL_NAME = "vit_autoencoder"
@@ -28,16 +33,17 @@ RUN_PARAMS = {
     "backbone": "vit_b_16",
     "encoder_params": "[768, 256, 128]",
     "decoder_params": "[128, 256, 768]",
-    "epochs": 20,
+    "epochs": EPOCHS,
     "learning_rate": 0.001,
     "loss_type": "Pure_SSIM",
     "batch_size": config.BATCH_SIZE, 
     "image_size": config.IMG_SIZE
 }
+
 # ---------------------------------------------------------
-# 1. Data Loading (Using Universal Config)
+# 1. Data Loading
 # ---------------------------------------------------------
-print(f"Starting SSIM Pipeline on {config.DEVICE}...")
+print(f"Starting ViT SSIM Pipeline on {config.DEVICE}...")
 
 train_loader, test_loader, normal_idx = dataloader(
     train_path=config.TRAIN_PATH, 
@@ -47,6 +53,7 @@ train_loader, test_loader, normal_idx = dataloader(
     n_test_normal=config.N_TEST_NORMAL,
     n_test_anomaly=config.N_TEST_ANOMALY,
     batch_size=config.BATCH_SIZE,
+    num_workers=config.NUM_WORKERS
 )
 
 # ---------------------------------------------------------
@@ -77,7 +84,7 @@ class FeatureAutoencoder(nn.Module):
 ae_model = FeatureAutoencoder().to(config.DEVICE)
 ae_model = torch.compile(ae_model) 
 
-optimizer = optim.Adam(ae_model.parameters(), lr=0.001)
+optimizer = optim.Adam(ae_model.parameters(), lr=RUN_PARAMS["learning_rate"])
 scaler = torch.amp.GradScaler('cuda') 
 
 # ---------------------------------------------------------
@@ -104,7 +111,6 @@ ae_train_loader = DataLoader(TensorDataset(train_feats_tensor), batch_size=confi
 # ---------------------------------------------------------
 tracker = MLFlowTracker(experiment_name="ViT_Autoencoder_SSIM")
 
-
 with tracker as run:
     tracker.log_params(RUN_PARAMS)
     print("\nTraining Autoencoder with Pure SSIM Loss...")
@@ -115,16 +121,13 @@ with tracker as run:
         batch_losses = []
         for batch in ae_train_loader:
             feats = batch[0].to(config.DEVICE, non_blocking=True)
-            
             optimizer.zero_grad(set_to_none=True)
+            
             with torch.autocast(device_type='cuda', dtype=torch.float16):
                 recon = ae_model(feats)
-                
                 # Reshape (B, 768) -> (B, 1, 24, 32) for SSIM
                 recon_2d = torch.clamp(recon.view(-1, 1, 24, 32), 0, 1)
                 feats_2d = torch.clamp(feats.view(-1, 1, 24, 32), 0, 1)
-                
-                # Calculate 1 - SSIM
                 ssim_loss = 1 - ssim(recon_2d, feats_2d, data_range=1.0)
             
             scaler.scale(ssim_loss).backward()
@@ -132,13 +135,12 @@ with tracker as run:
             scaler.update()
             batch_losses.append(ssim_loss.item())
             
-        avg_loss = np.mean(batch_losses)
-        train_losses.append(avg_loss)
+        train_losses.append(np.mean(batch_losses))
         if (epoch + 1) % 5 == 0:
-            print(f"Epoch [{epoch+1}/{EPOCHS}] Loss (SSIM): {avg_loss:.6f}")
+            print(f"Epoch [{epoch+1}/{EPOCHS}] Loss (SSIM): {train_losses[-1]:.6f}")
 
     # ---------------------------------------------------------
-    # 5. Threshold Optimization (Using SSIM Error)
+    # 5. Threshold Optimization
     # ---------------------------------------------------------
     ae_model.eval()
     
@@ -146,18 +148,16 @@ with tracker as run:
         with torch.no_grad():
             feats = feature_tensor.to(config.DEVICE)
             recon = ae_model(feats)
-            
             r2d = torch.clamp(recon.view(-1, 1, 24, 32), 0, 1)
             f2d = torch.clamp(feats.view(-1, 1, 24, 32), 0, 1)
             
-            # Calculate error per image
             sample_errors = []
             for i in range(r2d.shape[0]):
                 val = ssim(r2d[i:i+1], f2d[i:i+1], data_range=1.0)
                 sample_errors.append((1 - val).item())
             return np.array(sample_errors)
 
-    print("\nCalculating SSIM Errors for evaluation...")
+    print("\nCalculating SSIM Errors...")
     train_errors = get_ssim_errors(train_feats_tensor)
     all_test_errors = get_ssim_errors(test_feats_tensor)
     y_true_all = np.array([0 if l == normal_idx else 1 for l in test_labels_raw])
@@ -178,37 +178,39 @@ with tracker as run:
     precision, recall, f1, _ = precision_recall_fscore_support(test_lbls, test_preds, average='binary')
     
     # ---------------------------------------------------------
-    # 6. Logging & Artifacts
+    # 6. Logging & Standard Visuals
     # ---------------------------------------------------------
-    
-    
     l_p = plot_loss(train_losses, "ae_loss.png", MODEL_NAME)
-
     cm_p = plot_confusion_matrix(
         cm=confusion_matrix(test_lbls, test_preds), 
         target_names=['Normal', 'Anomaly'], 
-        precision=precision, 
-        recall=recall, 
-        f1=f1,
-        save_path="ae_cm.png", 
-        model_name=MODEL_NAME
+        precision=precision, recall=recall, f1=f1,
+        save_path="ae_cm.png", model_name=MODEL_NAME
     )
-    
     d_p = plot_error_distribution(
-        train_errors, 
-        test_errs[test_lbls==0], 
-        test_errs[test_lbls==1], 
-        best_thresh, 
-        "ae_dist.png", 
-        MODEL_NAME
+        train_errors, test_errs[test_lbls==0], test_errs[test_lbls==1], 
+        best_thresh, "ae_dist.png", MODEL_NAME
     )
 
     tracker.log_artifact(l_p)
     tracker.log_artifact(cm_p)
     tracker.log_artifact(d_p)
-    tracker.log_metric("optimal_threshold", best_thresh)
     tracker.log_metrics({"precision": precision, "recall": recall, "f1": f1})
     
-    torch.save(ae_model.state_dict(), os.path.join(config.PROJECT_ROOT, "vit_ae_model.pth"))
+    # ---------------------------------------------------------
+    # 7. Deep Analysis: Heatmaps of Top 10 & Worst 10
+    # ---------------------------------------------------------
+    # Fetch raw images from the dataset for visualization
+    raw_imgs, _ = next(iter(DataLoader(test_loader.dataset, batch_size=len(test_loader.dataset))))
     
+    generate_anomaly_analysis(
+        model=ae_model,
+        feature_tensor=test_feats_tensor, 
+        raw_images_tensor=raw_imgs,       
+        all_errors=all_test_errors,       
+        y_true=y_true_all,                
+        model_name=MODEL_NAME
+    )
+    
+    torch.save(ae_model.state_dict(), os.path.join(config.PROJECT_ROOT, "vit_ae_model.pth"))
     print(classification_report(test_lbls, test_preds, target_names=['Normal', 'Anomaly']))
