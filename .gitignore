@@ -5,3 +5,4 @@ src/__pycache__
 src/dataLoader/__pycache__
 src/mlruns
 src/__pycache__
+connect.bat

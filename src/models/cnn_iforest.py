@@ -17,11 +17,11 @@ sys.path.append(parent_dir)
 sys.path.append(current_dir)
 
 # Import custom helpers
-from visualization_helper import (
+from helper.visualization_helper import (
     plot_confusion_matrix_custom,
     plot_error_distribution # Useful for showing IF anomaly scores
 )
-from mlflow_helper import MLFlowTracker
+from helper.mlflow_helper import MLFlowTracker
 
 # ---------------------------------------------------------
 # 1. Configuration & Data Loading

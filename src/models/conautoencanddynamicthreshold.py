@@ -24,8 +24,8 @@ sys.path.append(parent_dir)
 
 # Import custom helpers
 from dataLoader.dataLoader import get_anomaly_dataloaders
-from visualization_helper import plot_loss, plot_error_distribution, plot_confusion_matrix_custom
-from mlflow_helper import MLFlowTracker
+from helper.visualization_helper import plot_loss, plot_error_distribution, plot_confusion_matrix_custom
+from helper.mlflow_helper import MLFlowTracker
 
 # ---------------------------------------------------------
 # 1. Configuration & Data Loading

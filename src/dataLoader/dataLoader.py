@@ -3,7 +3,7 @@ import torch
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
 
-def get_anomaly_dataloaders(
+def dataloader(
     train_path, 
     test_path, 
     n_train_normal=5000, 
