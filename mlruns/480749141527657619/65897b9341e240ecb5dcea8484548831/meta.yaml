@@ -1,0 +1,14 @@
+artifact_uri: file:////workspace/mlruns/480749141527657619/65897b9341e240ecb5dcea8484548831/artifacts
+end_time: 1774528982331
+entry_point_name: ''
+experiment_id: '480749141527657619'
+lifecycle_stage: active
+run_id: 65897b9341e240ecb5dcea8484548831
+run_name: amusing-moth-394
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1774528884458
+status: 3
+tags: []
+user_id: root

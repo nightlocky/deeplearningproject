@@ -1,0 +1,14 @@
+artifact_uri: file:////workspace/mlruns/480749141527657619/c9a25d99b07245e7afd0a5662dd16222/artifacts
+end_time: 1774529175227
+entry_point_name: ''
+experiment_id: '480749141527657619'
+lifecycle_stage: active
+run_id: c9a25d99b07245e7afd0a5662dd16222
+run_name: learned-slug-805
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1774529015988
+status: 3
+tags: []
+user_id: root
