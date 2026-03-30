@@ -5,12 +5,16 @@ import torch.nn as nn
 import torch.optim as optim
 from torchvision import models
 import numpy as np
-import random
 from sklearn.metrics import classification_report, confusion_matrix, precision_recall_fscore_support
 from sklearn.model_selection import train_test_split
 from torch.utils.data import TensorDataset, DataLoader
 from tqdm import tqdm
 from torchmetrics.functional import structural_similarity_index_measure as ssim
+
+# Ensure paths are correct
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(parent_dir)
 
 # Import Config and Helpers
 import config
@@ -19,22 +23,9 @@ from helper.visualization_helper import (
     plot_loss, 
     plot_error_distribution, 
     plot_confusion_matrix, 
-    generate_anomaly_analysis
+    generate_anomaly_analysis # New Universal Function
 )
 from helper.mlflow_helper import MLFlowTracker
-
-# ---------------------------------------------------------
-# 0. Global Reproducibility (Seeding)
-# ---------------------------------------------------------
-def set_seed(seed):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-set_seed(config.RANDOM_SEED)
 
 MODEL_NAME = "vit_autoencoder"
 EPOCHS = 20
@@ -46,8 +37,7 @@ RUN_PARAMS = {
     "learning_rate": 0.001,
     "loss_type": "Pure_SSIM",
     "batch_size": config.BATCH_SIZE, 
-    "image_size": config.IMG_SIZE,
-    "seed": config.RANDOM_SEED
+    "image_size": config.IMG_SIZE
 }
 
 # ---------------------------------------------------------
@@ -119,7 +109,7 @@ ae_train_loader = DataLoader(TensorDataset(train_feats_tensor), batch_size=confi
 # ---------------------------------------------------------
 # 4. Training Loop (Pure SSIM Loss)
 # ---------------------------------------------------------
-tracker = MLFlowTracker(experiment_name="ViT_Autoencoder")
+tracker = MLFlowTracker(experiment_name="ViT_Autoencoder_SSIM")
 
 with tracker as run:
     tracker.log_params(RUN_PARAMS)
@@ -173,10 +163,7 @@ with tracker as run:
     y_true_all = np.array([0 if l == normal_idx else 1 for l in test_labels_raw])
 
     val_errs, test_errs, val_lbls, test_lbls = train_test_split(
-        all_test_errors, y_true_all, 
-        test_size=0.5, 
-        stratify=y_true_all, 
-        random_state=config.RANDOM_SEED
+        all_test_errors, y_true_all, test_size=0.5, stratify=y_true_all, random_state=42
     )
 
     thresholds = np.linspace(val_errs.min(), val_errs.max(), 1000)
@@ -208,21 +195,15 @@ with tracker as run:
     tracker.log_artifact(l_p)
     tracker.log_artifact(cm_p)
     tracker.log_artifact(d_p)
-
-    tracker.log_metrics({
-        "precision": float(precision), 
-        "recall": float(recall), 
-        "f1": float(f1),
-        "threshold": float(best_thresh)
-    })
+    tracker.log_metrics({"precision": precision, "recall": recall, "f1": f1})
+    
     # ---------------------------------------------------------
     # 7. Deep Analysis: Heatmaps of Top 10 & Worst 10
     # ---------------------------------------------------------
     # Fetch raw images from the dataset for visualization
-    print("\nGenerating Deep Analysis Heatmaps...")
     raw_imgs, _ = next(iter(DataLoader(test_loader.dataset, batch_size=len(test_loader.dataset))))
     
-    path_hits, path_misses = generate_anomaly_analysis(
+    generate_anomaly_analysis(
         model=ae_model,
         feature_tensor=test_feats_tensor, 
         raw_images_tensor=raw_imgs,       
@@ -231,9 +212,5 @@ with tracker as run:
         model_name=MODEL_NAME
     )
     
-    tracker.log_artifact(path_hits)
-    tracker.log_artifact(path_misses)
-    
     torch.save(ae_model.state_dict(), os.path.join(config.PROJECT_ROOT, "vit_ae_model.pth"))
-    print("\n" + "="*30)
     print(classification_report(test_lbls, test_preds, target_names=['Normal', 'Anomaly']))

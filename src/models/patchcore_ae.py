@@ -11,7 +11,11 @@ from sklearn.model_selection import train_test_split
 from torch.utils.data import TensorDataset, DataLoader
 from tqdm import tqdm
 from torchmetrics.functional import structural_similarity_index_measure as ssim
-import cv2
+
+# Ensure paths are correct
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(parent_dir)
 
 # Import Config and Helpers
 import config
@@ -112,7 +116,7 @@ ae_train_loader = DataLoader(TensorDataset(train_feats_tensor), batch_size=confi
 # ---------------------------------------------------------
 # 4. Training Loop (Pure SSIM Loss)
 # ---------------------------------------------------------
-tracker = MLFlowTracker(experiment_name="PatchCore_Autoencoder")
+tracker = MLFlowTracker(experiment_name="PatchCore_Autoencoder_SSIM")
 
 with tracker as run:
     tracker.log_params(RUN_PARAMS)
@@ -171,7 +175,7 @@ with tracker as run:
     y_true_all = np.array([0 if l == normal_idx else 1 for l in test_labels_raw])
 
     val_errs, test_errs, val_lbls, test_lbls = train_test_split(
-        all_test_errors, y_true_all, test_size=0.5, stratify=y_true_all, random_state=CONFIG.RANDOM_SEED
+        all_test_errors, y_true_all, test_size=0.5, stratify=y_true_all, random_state=42
     )
 
     thresholds = np.linspace(val_errs.min(), val_errs.max(), 1000)
