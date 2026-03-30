@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
+import segmentation_models_pytorch as smp
 from sklearn.metrics import classification_report, confusion_matrix, precision_recall_fscore_support
 from sklearn.model_selection import train_test_split
 from torch.utils.data import TensorDataset, DataLoader
@@ -16,19 +17,18 @@ from dataLoader.dataLoader import dataloader
 from helper.visualization_helper import (
     plot_loss, 
     plot_error_distribution, 
-    plot_confusion_matrix, 
-    plot_anomaly_comparison  # <--- ONLY import the plotting tool, not the generator
+    plot_confusion_matrix
 )
 from helper.mlflow_helper import MLFlowTracker
 
-MODEL_NAME = "image_autoencoder"
-EPOCHS = 20
+MODEL_NAME = "unet_resnet34_autoencoder"
+EPOCHS = 10
 RUN_PARAMS = {
-    "backbone": "Convolutional_Image_AE",
-    "encoder_params": "Conv2d[32, 64, 128]",
-    "decoder_params": "ConvTranspose2d[64, 32, 3]",
+    "backbone": "UNet_ResNet34_Pretrained",
+    "encoder_weights": "imagenet",
     "epochs": EPOCHS,
-    "learning_rate": 0.001,
+    "encoder_lr": 1e-4,  # Lower LR so we don't destroy ImageNet weights
+    "decoder_lr": 1e-3,  # Standard LR for learning to build the OCT scan
     "loss_type": "Pure_SSIM_Pixels",
     "batch_size": config.BATCH_SIZE, 
     "image_size": config.IMG_SIZE,
@@ -52,43 +52,36 @@ train_loader, test_loader, normal_idx = dataloader(
 )
 
 # ---------------------------------------------------------
-# 2. Models: Image Autoencoder
+# 2. Models: Pretrained U-Net Autoencoder
 # ---------------------------------------------------------
-print("Loading Convolutional Autoencoder...")
+print("Loading Pretrained U-Net (ResNet34) Autoencoder...")
 
-class ImageAutoencoder(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.encoder = nn.Sequential(
-            nn.Conv2d(3, 32, 3, stride=2, padding=1),  
-            nn.ReLU(),
-            nn.Conv2d(32, 64, 3, stride=2, padding=1), 
-            nn.ReLU(),
-            nn.Conv2d(64, 128, 3, stride=2, padding=1),
-            nn.ReLU()
-        )
-        self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(128, 64, 3, stride=2, padding=1, output_padding=1),
-            nn.ReLU(),
-            nn.ConvTranspose2d(64, 32, 3, stride=2, padding=1, output_padding=1),
-            nn.ReLU(),
-            nn.ConvTranspose2d(32, 3, 3, stride=2, padding=1, output_padding=1),
-            nn.Sigmoid() 
-        )
-        
-    def forward(self, x):
-        return self.decoder(self.encoder(x))
+# Use SMP to generate the U-Net architecture
+ae_model = smp.Unet(
+    encoder_name="resnet34",        
+    encoder_weights="imagenet",     
+    in_channels=3,                  
+    classes=3,                      # Output needs 3 channels to match input image
+    activation="sigmoid"            # Force output to [0, 1] range for valid SSIM calculation
+).to(config.DEVICE)
 
-ae_model = ImageAutoencoder().to(config.DEVICE)
 ae_model = torch.compile(ae_model) 
 
-optimizer = optim.Adam(ae_model.parameters(), lr=RUN_PARAMS["learning_rate"])
+# Differential Learning Rates: Group parameters into encoder vs. rest
+encoder_params = list(ae_model.encoder.parameters())
+decoder_params = list(ae_model.decoder.parameters()) + list(ae_model.segmentation_head.parameters())
+
+optimizer = optim.Adam([
+    {'params': encoder_params, 'lr': RUN_PARAMS["encoder_lr"]},
+    {'params': decoder_params, 'lr': RUN_PARAMS["decoder_lr"]}
+])
+
 scaler = torch.amp.GradScaler('cuda') 
 
 # ---------------------------------------------------------
 # 4. Training Loop (Pure SSIM Loss on Pixels)
 # ---------------------------------------------------------
-tracker = MLFlowTracker(experiment_name="vit_autoencoder_image")
+tracker = MLFlowTracker(experiment_name="unet_autoencoder_image")
 
 with tracker as run:
     tracker.log_params(RUN_PARAMS)
