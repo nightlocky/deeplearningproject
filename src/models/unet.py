@@ -25,13 +25,12 @@ from helper.visualization_helper import (
     plot_confusion_matrix
 )
 from helper.mlflow_helper import MLFlowTracker
-# Updated import to match your new file location
 from helper.EarlyStopping import EarlyStopping 
 
 # ---------------------------------------------------------
 # 0. Global Settings & Params
 # ---------------------------------------------------------
-MODEL_NAME = "unet_resnet34_autoencoder"
+MODEL_NAME = "unet_resnet34_autoencoder_1ch"
 EPOCHS = 50 
 RUN_PARAMS = {
     "backbone": "UNet_ResNet34_Pretrained",
@@ -42,7 +41,8 @@ RUN_PARAMS = {
     "loss_type": "Pure_SSIM_Pixels",
     "batch_size": config.BATCH_SIZE, 
     "image_size": config.IMG_SIZE,
-    "seed": config.RANDOM_SEED
+    "seed": config.RANDOM_SEED,
+    "channels": 1 # Tracking that we are now in 1-channel mode
 }
 
 sns.set_theme(style="whitegrid")
@@ -50,7 +50,7 @@ sns.set_theme(style="whitegrid")
 # ---------------------------------------------------------
 # 1. Data Loading
 # ---------------------------------------------------------
-print(f"Starting Image SSIM Pipeline on {config.DEVICE}...")
+print(f"Starting Image SSIM Pipeline (1-Channel) on {config.DEVICE}...")
 
 train_loader, test_loader, normal_idx = dataloader(
     train_path=config.TRAIN_PATH, 
@@ -64,15 +64,15 @@ train_loader, test_loader, normal_idx = dataloader(
 )
 
 # ---------------------------------------------------------
-# 2. Models: Pretrained U-Net Autoencoder
+# 2. Models: Pretrained U-Net Autoencoder (Modified for 1-Channel)
 # ---------------------------------------------------------
 print("Loading Pretrained U-Net (ResNet34) Autoencoder...")
 
 ae_model = smp.Unet(
     encoder_name="resnet34",         
     encoder_weights="imagenet",      
-    in_channels=3,                   
-    classes=3,                       
+    in_channels=1,     # Changed from 3 to 1                
+    classes=1,         # Changed from 3 to 1                      
     activation="sigmoid"             
 ).to(config.DEVICE)
 
@@ -96,7 +96,7 @@ scaler = torch.amp.GradScaler('cuda')
 # ---------------------------------------------------------
 # 4. Training Loop
 # ---------------------------------------------------------
-tracker = MLFlowTracker(experiment_name="unet_autoencoder_image")
+tracker = MLFlowTracker(experiment_name="unet_autoencoder_image_1ch")
 
 with tracker as run:
     tracker.log_params(RUN_PARAMS)
@@ -122,9 +122,7 @@ with tracker as run:
         epoch_loss = np.mean(batch_losses)
         train_losses.append(epoch_loss)
         
-        # Update Scheduler and Early Stopping
         scheduler.step(epoch_loss)
-        # This triggers the __call__ method in your EarlyStopping class
         early_stopping(epoch_loss, ae_model)
         
         if (epoch + 1) % 5 == 0:
@@ -138,7 +136,6 @@ with tracker as run:
     # 5. Load Best Weights & Evaluation
     # ---------------------------------------------------------
     print("\nLoading Best Weights for Final Evaluation...")
-    # This loads the .pth file that EarlyStopping saved automatically
     ae_model.load_state_dict(torch.load(best_model_path)) 
     ae_model.eval()
     
@@ -197,9 +194,6 @@ with tracker as run:
     # ---------------------------------------------------------
     # 7. Specialized Heatmap Generator
     # ---------------------------------------------------------
-# ---------------------------------------------------------
-    # 7. Specialized Heatmap Generator
-    # ---------------------------------------------------------
     print("\nGenerating Deep Analysis Heatmaps...")
     
     def generate_local_heatmaps(indices, title, filename):
@@ -212,20 +206,20 @@ with tracker as run:
             subset_imgs = all_raw_tensor[indices].to(config.DEVICE)
             subset_recons = ae_model(subset_imgs).cpu().numpy()
             subset_origs = subset_imgs.cpu().numpy()
-            subset_scores = all_test_errors[indices]
             
         num_imgs = len(indices)
         fig, axes = plt.subplots(num_imgs, 3, figsize=(15, 5 * num_imgs))
         if num_imgs == 1: axes = [axes]
             
         for i in range(num_imgs):
-            orig = np.transpose(subset_origs[i], (1, 2, 0))
-            recon = np.transpose(subset_recons[i], (1, 2, 0))
-            heatmap = np.mean(np.abs(orig - recon), axis=-1) 
+            # Squeeze added to handle 1-channel (C, H, W) -> (H, W)
+            orig = np.squeeze(subset_origs[i])
+            recon = np.squeeze(subset_recons[i])
+            heatmap = np.abs(orig - recon) 
             
-            axes[i][0].imshow(np.clip(orig, 0, 1))
+            axes[i][0].imshow(orig, cmap='gray')
             axes[i][0].axis('off')
-            axes[i][1].imshow(np.clip(recon, 0, 1))
+            axes[i][1].imshow(recon, cmap='gray')
             axes[i][1].axis('off')
             sns.heatmap(heatmap, ax=axes[i][2], cmap='rocket', cbar=True)
             axes[i][2].axis('off')
@@ -238,20 +232,13 @@ with tracker as run:
         plt.close(fig)
         return final_path
 
-    # Identify indices where the true label is Anomaly (1)
     anomaly_indices = np.where(y_true_all == 1)[0]
     anom_scores = all_test_errors[anomaly_indices]
-    
-    # Sort anomaly scores
     sorted_idx = np.argsort(anom_scores)
     
-    # 10 Best: Highest scores (Top of the list, reversed)
     top_hits = anomaly_indices[sorted_idx[-10:][::-1]]
-    
-    # 10 Worst: Lowest scores (Bottom of the list)
     top_miss = anomaly_indices[sorted_idx[:10]]
     
-    # Generate and log both sets
     path_hits = generate_local_heatmaps(top_hits, "Top 10 Correct Identifications", "heatmaps_hits.png")
     path_miss = generate_local_heatmaps(top_miss, "Top 10 Worst Misses (False Negatives)", "heatmaps_misses.png")
     

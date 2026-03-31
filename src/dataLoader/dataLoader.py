@@ -22,9 +22,9 @@ def dataloader(
     # Standard normalization for pretrained models
     transform = transforms.Compose([
         transforms.Resize((img_size, img_size)),
-        transforms.Grayscale(num_output_channels=3), # Ensure 3 channels
+        transforms.Grayscale(num_output_channels=1), # Ensure 3 channels
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        #transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
 
     # 1. Load Datasets
