@@ -1,0 +1,14 @@
+artifact_uri: file:///workspace/mlruns/396173950337296118/6e5b3e5662704974ac8fe6b1b67684ae/artifacts
+end_time: 1774931394741
+entry_point_name: ''
+experiment_id: '396173950337296118'
+lifecycle_stage: active
+run_id: 6e5b3e5662704974ac8fe6b1b67684ae
+run_name: puzzled-yak-454
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1774930759970
+status: 3
+tags: []
+user_id: root

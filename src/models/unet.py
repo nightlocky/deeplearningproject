@@ -42,7 +42,7 @@ RUN_PARAMS = {
     "batch_size": config.BATCH_SIZE, 
     "image_size": config.IMG_SIZE,
     "seed": config.RANDOM_SEED,
-    "channels": 1 # Tracking that we are now in 1-channel mode
+    "channels": 1 
 }
 
 sns.set_theme(style="whitegrid")
@@ -56,23 +56,23 @@ train_loader, test_loader, normal_idx = dataloader(
     train_path=config.TRAIN_PATH, 
     test_path=config.TEST_PATH, 
     img_size=config.IMG_SIZE,
-    n_train_normal=config.N_TRAIN_NORMAL,
+    n_train_normal= 5000, # config.N_TRAIN_NORMAL,
     n_test_normal=config.N_TEST_NORMAL,
     n_test_anomaly=config.N_TEST_ANOMALY,
     batch_size=config.BATCH_SIZE,
-    num_workers=config.NUM_WORKERS
+    num_workers=16 
 )
 
 # ---------------------------------------------------------
-# 2. Models: Pretrained U-Net Autoencoder (Modified for 1-Channel)
+# 2. Models: Pretrained U-Net Autoencoder
 # ---------------------------------------------------------
 print("Loading Pretrained U-Net (ResNet34) Autoencoder...")
 
 ae_model = smp.Unet(
     encoder_name="resnet34",         
     encoder_weights="imagenet",      
-    in_channels=1,     # Changed from 3 to 1                
-    classes=1,         # Changed from 3 to 1                      
+    in_channels=1,                    
+    classes=1,                               
     activation="sigmoid"             
 ).to(config.DEVICE)
 
@@ -94,9 +94,13 @@ scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0
 scaler = torch.amp.GradScaler('cuda') 
 
 # ---------------------------------------------------------
-# 4. Training Loop
+# 4. Training Loop (Option 2: GPU-to-GPU Cloning)
 # ---------------------------------------------------------
-tracker = MLFlowTracker(experiment_name="unet_autoencoder_image_1ch")
+tracker = MLFlowTracker(experiment_name="unet_autoencoder_image")
+
+# Tracking best model in VRAM directly
+best_model_state_vram = None
+best_epoch_loss = float('inf')
 
 with tracker as run:
     tracker.log_params(RUN_PARAMS)
@@ -124,6 +128,12 @@ with tracker as run:
         
         scheduler.step(epoch_loss)
         early_stopping(epoch_loss, ae_model)
+
+        # OPTION 2: Instant GPU-to-GPU clone (No PCIe bottleneck)
+        if epoch_loss < best_epoch_loss:
+            best_epoch_loss = epoch_loss
+            # Note: No .cpu() call here. We keep it on the device.
+            best_model_state_vram = {k: v.clone() for k, v in ae_model.state_dict().items()}
         
         if (epoch + 1) % 5 == 0:
             print(f"Epoch [{epoch+1}/{EPOCHS}] Loss (SSIM): {epoch_loss:.6f}")
@@ -136,7 +146,11 @@ with tracker as run:
     # 5. Load Best Weights & Evaluation
     # ---------------------------------------------------------
     print("\nLoading Best Weights for Final Evaluation...")
-    ae_model.load_state_dict(torch.load(best_model_path)) 
+    # REVERT LATER: Uncomment the line below to load from disk
+    # ae_model.load_state_dict(torch.load(best_model_path)) 
+    
+    # Using the fast VRAM buffer
+    ae_model.load_state_dict(best_model_state_vram)
     ae_model.eval()
     
     def get_ssim_errors(loader, desc):
@@ -191,7 +205,7 @@ with tracker as run:
     tracker.log_artifact(d_p)
     tracker.log_metrics({"test_f1": float(f1), "optimal_threshold": float(best_thresh)})
     
-    # 7. Five-Category Deep Analysis (Corrected Indexing)
+    # 7. Five-Category Deep Analysis
     # ---------------------------------------------------------
     print("\nGenerating Five-Category Deep Analysis (10 samples each)...")
     all_preds = (all_test_errors > best_thresh).astype(int)
@@ -204,7 +218,6 @@ with tracker as run:
         selected_indices = indices[:10]
         num_imgs = len(selected_indices)
         
-        # Memory-efficient way to get specific tensors from the loader
         all_raw_images = []
         for imgs, _ in test_loader: 
             all_raw_images.append(imgs)
@@ -214,7 +227,6 @@ with tracker as run:
             subset_imgs = all_raw_tensor[selected_indices].to(config.DEVICE)
             subset_recons = ae_model(subset_imgs).cpu().numpy()
             subset_origs = subset_imgs.cpu().numpy()
-            # Use the full error array for scoring
             subset_scores = all_test_errors[selected_indices]
             
         fig, axes = plt.subplots(num_imgs, 3, figsize=(15, 5 * num_imgs))
@@ -225,21 +237,17 @@ with tracker as run:
         for i in range(num_imgs):
             orig = np.squeeze(subset_origs[i])
             recon = np.squeeze(subset_recons[i])
-            # We use L1 (absolute difference) for the heatmap visualization
             heatmap = np.abs(orig - recon) 
             score = subset_scores[i]
             
-            # Column 1: Original
             axes[i][0].imshow(orig, cmap='gray')
             axes[i][0].set_title(f"Original (Error: {score:.4f})")
             axes[i][0].axis('off')
             
-            # Column 2: Reconstruction
             axes[i][1].imshow(recon, cmap='gray')
             axes[i][1].set_title("Reconstruction")
             axes[i][1].axis('off')
             
-            # Column 3: Error Heatmap (Rocket highlights where the model 'missed')
             sns.heatmap(heatmap, ax=axes[i][2], cmap='rocket', cbar=True)
             axes[i][2].set_title("Difference Map")
             axes[i][2].axis('off')
@@ -252,30 +260,22 @@ with tracker as run:
         plt.close(fig)
         return final_path
 
-    # Category Logic (Based on Full 100% Test Set)
     tn_idx = np.where((y_true_all == 0) & (all_preds == 0))[0]
     fp_idx = np.where((y_true_all == 0) & (all_preds == 1))[0]
     fn_idx = np.where((y_true_all == 1) & (all_preds == 0))[0]
     
-    # Get original class names from the underlying ImageFolder
-    # Use .dataset.dataset because test_loader.dataset is a 'Subset'
     inv_class_to_idx = {v: k for k, v in test_loader.dataset.dataset.class_to_idx.items()}
     
-    # Log Category 1 (Normal Correct) and 2 (Normal False Alarm)
     tracker.log_artifact(generate_category_heatmaps(tn_idx, "TN: Normal correctly identified", "cat1_tn.png"))
     tracker.log_artifact(generate_category_heatmaps(fp_idx, "FP: Normal flagged as Anomaly", "cat2_fp.png"))
 
-    # Log Categories 3-5 (The specific Anomaly Misses)
     for class_idx, class_name in inv_class_to_idx.items():
         if class_name == 'NORMAL': continue
-        
-        # Logic: Label is this specific disease AND model predicted it was Normal
         specific_fn_idx = [i for i in fn_idx if test_labels_raw[i] == class_idx]
-        
         filename = f"cat_fn_{class_name.lower()}.png"
         path = generate_category_heatmaps(specific_fn_idx, f"FN: {class_name} missed by model", filename)
         if path: tracker.log_artifact(path)
 
     print("\n" + "="*30)
-    print("FINAL TEST PERFORMANCE (Using Best Checkpoint)")
+    print("FINAL TEST PERFORMANCE")
     print(classification_report(test_lbls, test_preds, target_names=['Normal', 'Anomaly']))

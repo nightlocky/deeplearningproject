@@ -1,0 +1,14 @@
+artifact_uri: file:///workspace/mlruns/396173950337296118/98685f3a96994005abbcb945d9e6533d/artifacts
+end_time: 1774933906307
+entry_point_name: ''
+experiment_id: '396173950337296118'
+lifecycle_stage: active
+run_id: 98685f3a96994005abbcb945d9e6533d
+run_name: stylish-squid-592
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1774933644894
+status: 3
+tags: []
+user_id: root
