@@ -191,40 +191,60 @@ with tracker as run:
     tracker.log_artifact(d_p)
     tracker.log_metrics({"test_f1": float(f1), "optimal_threshold": float(best_thresh)})
     
+    # 7. Five-Category Deep Analysis (Corrected Indexing)
     # ---------------------------------------------------------
-    # 7. Specialized Heatmap Generator
-    # ---------------------------------------------------------
-    print("\nGenerating Deep Analysis Heatmaps...")
-    
-    def generate_local_heatmaps(indices, title, filename):
-        if len(indices) == 0: return None
+    print("\nGenerating Five-Category Deep Analysis (10 samples each)...")
+    all_preds = (all_test_errors > best_thresh).astype(int)
+
+    def generate_category_heatmaps(indices, category_name, filename):
+        if len(indices) == 0: 
+            print(f"No samples found for category: {category_name}")
+            return None
+            
+        selected_indices = indices[:10]
+        num_imgs = len(selected_indices)
+        
+        # Memory-efficient way to get specific tensors from the loader
         all_raw_images = []
-        for imgs, _ in test_loader: all_raw_images.append(imgs)
+        for imgs, _ in test_loader: 
+            all_raw_images.append(imgs)
         all_raw_tensor = torch.cat(all_raw_images)
 
         with torch.no_grad():
-            subset_imgs = all_raw_tensor[indices].to(config.DEVICE)
+            subset_imgs = all_raw_tensor[selected_indices].to(config.DEVICE)
             subset_recons = ae_model(subset_imgs).cpu().numpy()
             subset_origs = subset_imgs.cpu().numpy()
+            # Use the full error array for scoring
+            subset_scores = all_test_errors[selected_indices]
             
-        num_imgs = len(indices)
         fig, axes = plt.subplots(num_imgs, 3, figsize=(15, 5 * num_imgs))
-        if num_imgs == 1: axes = [axes]
+        if num_imgs == 1: axes = np.expand_dims(axes, axis=0)
             
+        fig.suptitle(f"Category: {category_name}\nThreshold: {best_thresh:.4f}", fontsize=16)
+
         for i in range(num_imgs):
-            # Squeeze added to handle 1-channel (C, H, W) -> (H, W)
             orig = np.squeeze(subset_origs[i])
             recon = np.squeeze(subset_recons[i])
+            # We use L1 (absolute difference) for the heatmap visualization
             heatmap = np.abs(orig - recon) 
+            score = subset_scores[i]
             
+            # Column 1: Original
             axes[i][0].imshow(orig, cmap='gray')
+            axes[i][0].set_title(f"Original (Error: {score:.4f})")
             axes[i][0].axis('off')
+            
+            # Column 2: Reconstruction
             axes[i][1].imshow(recon, cmap='gray')
+            axes[i][1].set_title("Reconstruction")
             axes[i][1].axis('off')
+            
+            # Column 3: Error Heatmap (Rocket highlights where the model 'missed')
             sns.heatmap(heatmap, ax=axes[i][2], cmap='rocket', cbar=True)
+            axes[i][2].set_title("Difference Map")
             axes[i][2].axis('off')
             
-        plt.tight_layout()
+        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
         target_dir = os.path.join(config.GRAPHS_DIR, MODEL_NAME)
         os.makedirs(target_dir, exist_ok=True)
         final_path = os.path.join(target_dir, filename)
@@ -232,19 +252,30 @@ with tracker as run:
         plt.close(fig)
         return final_path
 
-    anomaly_indices = np.where(y_true_all == 1)[0]
-    anom_scores = all_test_errors[anomaly_indices]
-    sorted_idx = np.argsort(anom_scores)
+    # Category Logic (Based on Full 100% Test Set)
+    tn_idx = np.where((y_true_all == 0) & (all_preds == 0))[0]
+    fp_idx = np.where((y_true_all == 0) & (all_preds == 1))[0]
+    fn_idx = np.where((y_true_all == 1) & (all_preds == 0))[0]
     
-    top_hits = anomaly_indices[sorted_idx[-10:][::-1]]
-    top_miss = anomaly_indices[sorted_idx[:10]]
+    # Get original class names from the underlying ImageFolder
+    # Use .dataset.dataset because test_loader.dataset is a 'Subset'
+    inv_class_to_idx = {v: k for k, v in test_loader.dataset.dataset.class_to_idx.items()}
     
-    path_hits = generate_local_heatmaps(top_hits, "Top 10 Correct Identifications", "heatmaps_hits.png")
-    path_miss = generate_local_heatmaps(top_miss, "Top 10 Worst Misses (False Negatives)", "heatmaps_misses.png")
-    
-    tracker.log_artifact(path_hits)
-    tracker.log_artifact(path_miss)
-    
+    # Log Category 1 (Normal Correct) and 2 (Normal False Alarm)
+    tracker.log_artifact(generate_category_heatmaps(tn_idx, "TN: Normal correctly identified", "cat1_tn.png"))
+    tracker.log_artifact(generate_category_heatmaps(fp_idx, "FP: Normal flagged as Anomaly", "cat2_fp.png"))
+
+    # Log Categories 3-5 (The specific Anomaly Misses)
+    for class_idx, class_name in inv_class_to_idx.items():
+        if class_name == 'NORMAL': continue
+        
+        # Logic: Label is this specific disease AND model predicted it was Normal
+        specific_fn_idx = [i for i in fn_idx if test_labels_raw[i] == class_idx]
+        
+        filename = f"cat_fn_{class_name.lower()}.png"
+        path = generate_category_heatmaps(specific_fn_idx, f"FN: {class_name} missed by model", filename)
+        if path: tracker.log_artifact(path)
+
     print("\n" + "="*30)
     print("FINAL TEST PERFORMANCE (Using Best Checkpoint)")
     print(classification_report(test_lbls, test_preds, target_names=['Normal', 'Anomaly']))
