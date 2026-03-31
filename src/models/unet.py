@@ -1,5 +1,4 @@
 import os
-import sys
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -13,269 +12,166 @@ from torch.utils.data import TensorDataset, DataLoader
 from tqdm import tqdm
 from torchmetrics.functional import structural_similarity_index_measure as ssim
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-sys.path.append(parent_dir)
-
-import config
-from dataLoader.dataLoader import dataloader
-from helper.visualization_helper import (
-    plot_loss, 
-    plot_error_distribution, 
-    plot_confusion_matrix
+# Custom Imports
+from src import config
+from src.dataLoader.dataLoader import dataloader
+from src.helper.visualization_helper import (
+    plot_loss,
+    plot_confusion_matrix,
+    plot_error_distribution
 )
-from helper.mlflow_helper import MLFlowTracker
-from helper.EarlyStopping import EarlyStopping 
-
+from src.helper.mlflow_helper import MLFlowTracker
+from src.helper.EarlyStopping import EarlyStopping 
+from src.models.errorCNNClassifier import ErrorCNN
 # ---------------------------------------------------------
-# 0. Global Settings & Params
+# 0. Configuration
 # ---------------------------------------------------------
-MODEL_NAME = "unet_resnet34_autoencoder_1ch"
-EPOCHS = 50 
+MODEL_NAME = "unet_resnet34_autoencoder"
+EPOCHS = 5 
 RUN_PARAMS = {
-    "backbone": "UNet_ResNet34_Pretrained",
-    "encoder_weights": "imagenet",
+    "backbone": "ResNet34",
     "epochs": EPOCHS,
     "encoder_lr": 1e-4,  
     "decoder_lr": 1e-3,  
-    "loss_type": "Pure_SSIM_Pixels",
-    "batch_size": config.BATCH_SIZE, 
-    "image_size": config.IMG_SIZE,
-    "seed": config.RANDOM_SEED,
-    "channels": 1 
+    "batch_size": config.BATCH_SIZE,
+    "n_train": config.N_TRAIN_NORMAL
 }
-
-sns.set_theme(style="whitegrid")
 
 # ---------------------------------------------------------
 # 1. Data Loading
 # ---------------------------------------------------------
-print(f"Starting Image SSIM Pipeline (1-Channel) on {config.DEVICE}...")
-
 train_loader, test_loader, normal_idx = dataloader(
     train_path=config.TRAIN_PATH, 
     test_path=config.TEST_PATH, 
     img_size=config.IMG_SIZE,
-    n_train_normal= 5000, # config.N_TRAIN_NORMAL,
-    n_test_normal=config.N_TEST_NORMAL,
-    n_test_anomaly=config.N_TEST_ANOMALY,
+    n_train_normal=100, 
+    n_test_normal=50, 
+    n_test_anomaly=5,   
     batch_size=config.BATCH_SIZE,
-    num_workers=16 
+    num_workers=0
 )
 
 # ---------------------------------------------------------
-# 2. Models: Pretrained U-Net Autoencoder
+# 2. Model Initialization
 # ---------------------------------------------------------
-print("Loading Pretrained U-Net (ResNet34) Autoencoder...")
-
 ae_model = smp.Unet(
-    encoder_name="resnet34",         
-    encoder_weights="imagenet",      
-    in_channels=1,                    
-    classes=1,                               
-    activation="sigmoid"             
+    encoder_name="resnet34", encoder_weights="imagenet",
+    in_channels=1, classes=1, activation="sigmoid"
 ).to(config.DEVICE)
 
-ae_model = torch.compile(ae_model) 
-
-encoder_params = list(ae_model.encoder.parameters())
-decoder_params = list(ae_model.decoder.parameters()) + list(ae_model.segmentation_head.parameters())
-
 optimizer = optim.Adam([
-    {'params': encoder_params, 'lr': RUN_PARAMS["encoder_lr"]},
-    {'params': decoder_params, 'lr': RUN_PARAMS["decoder_lr"]}
+    {'params': ae_model.encoder.parameters(), 'lr': RUN_PARAMS["encoder_lr"]},
+    {'params': list(ae_model.decoder.parameters()) + list(ae_model.segmentation_head.parameters()), 'lr': RUN_PARAMS["decoder_lr"]}
 ])
 
-# Initialize Training Utilities
-best_model_path = os.path.join(config.PROJECT_ROOT, f"{MODEL_NAME}_best.pth")
-early_stopping = EarlyStopping(patience=5, path=best_model_path)
+early_stopping = EarlyStopping(patience=15, path=os.path.join(config.PROJECT_ROOT, f"{MODEL_NAME}.pth"))
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
-
 scaler = torch.amp.GradScaler('cuda') 
 
 # ---------------------------------------------------------
-# 4. Training Loop (Option 2: GPU-to-GPU Cloning)
+# 3. Phase 1: Autoencoder Training
 # ---------------------------------------------------------
-tracker = MLFlowTracker(experiment_name="unet_autoencoder_image")
+tracker = MLFlowTracker(experiment_name="unet_autoencoder_image_withCNN")
+best_model_vram = None
 
-# Tracking best model in VRAM directly
-best_model_state_vram = None
-best_epoch_loss = float('inf')
-
-with tracker as run:
+with tracker:
     tracker.log_params(RUN_PARAMS)
-    print("\nTraining Autoencoder with Pure SSIM Loss...")
     train_losses = []
     
     for epoch in range(EPOCHS):
         ae_model.train()
         batch_losses = []
-        for imgs, _ in tqdm(train_loader, desc=f"Epoch [{epoch+1}/{EPOCHS}]"):
+        for imgs, _ in tqdm(train_loader, desc=f"AE Epoch {epoch+1}"):
             imgs = imgs.to(config.DEVICE, non_blocking=True)
             optimizer.zero_grad(set_to_none=True)
             
             with torch.autocast(device_type='cuda', dtype=torch.float16):
                 recon = ae_model(imgs)
-                ssim_loss = 1 - ssim(recon, imgs, data_range=1.0)
+                loss = 1 - ssim(recon, imgs, data_range=1.0)
             
-            scaler.scale(ssim_loss).backward()
+            scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
-            batch_losses.append(ssim_loss.item())
+            batch_losses.append(loss.item())
             
         epoch_loss = np.mean(batch_losses)
         train_losses.append(epoch_loss)
-        
         scheduler.step(epoch_loss)
         early_stopping(epoch_loss, ae_model)
 
-        # OPTION 2: Instant GPU-to-GPU clone (No PCIe bottleneck)
-        if epoch_loss < best_epoch_loss:
-            best_epoch_loss = epoch_loss
-            # Note: No .cpu() call here. We keep it on the device.
-            best_model_state_vram = {k: v.clone() for k, v in ae_model.state_dict().items()}
-        
-        if (epoch + 1) % 5 == 0:
-            print(f"Epoch [{epoch+1}/{EPOCHS}] Loss (SSIM): {epoch_loss:.6f}")
-            
-        if early_stopping.early_stop:
-            print(f"Early Stopping triggered. Halting training.")
-            break
+        if early_stopping.counter == 0:
+            best_model_vram = {k: v.clone() for k, v in ae_model.state_dict().items()}
+        if early_stopping.early_stop: break
 
     # ---------------------------------------------------------
-    # 5. Load Best Weights & Evaluation
+    # 4. Phase 2: CNN Spatial Thresholding
     # ---------------------------------------------------------
-    print("\nLoading Best Weights for Final Evaluation...")
-    # REVERT LATER: Uncomment the line below to load from disk
-    # ae_model.load_state_dict(torch.load(best_model_path)) 
-    
-    # Using the fast VRAM buffer
-    ae_model.load_state_dict(best_model_state_vram)
+    ae_model.load_state_dict(best_model_vram)
     ae_model.eval()
     
-    def get_ssim_errors(loader, desc):
-        sample_errors = []
-        labels = []
+    def get_spatial_errors(loader):
+        maps, folder_ids = [], []
         with torch.no_grad():
-            for imgs, lbls in tqdm(loader, desc=desc):
-                imgs = imgs.to(config.DEVICE)
-                recon = ae_model(imgs)
-                for i in range(recon.shape[0]):
-                    val = ssim(recon[i:i+1], imgs[i:i+1], data_range=1.0)
-                    sample_errors.append((1 - val).item())
-                labels.extend(lbls.numpy())
-        return np.array(sample_errors), np.array(labels)
+            for imgs, lbls in tqdm(loader, desc="Extracting Maps"):
+                diff = torch.abs(imgs.to(config.DEVICE) - ae_model(imgs.to(config.DEVICE)))
+                maps.append(diff.cpu())
+                folder_ids.extend(lbls.numpy())
+        return torch.cat(maps), np.array(folder_ids)
 
-    train_errors, _ = get_ssim_errors(train_loader, "Train Errors")
-    all_test_errors, test_labels_raw = get_ssim_errors(test_loader, "Test Errors")
-    y_true_all = np.array([0 if l == normal_idx else 1 for l in test_labels_raw])
+    all_maps, all_folder_labels = get_spatial_errors(test_loader)
+    all_binary_labels = np.array([0 if l == normal_idx else 1 for l in all_folder_labels])
 
-    val_errs, test_errs, val_lbls, test_lbls = train_test_split(
-        all_test_errors, y_true_all, test_size=0.5, stratify=y_true_all, random_state=config.RANDOM_SEED
+    (val_maps, test_maps, val_bin, test_bin, val_raw, test_raw) = train_test_split(
+        all_maps, all_binary_labels, all_folder_labels, test_size=0.5, stratify=all_binary_labels
     )
 
-    thresholds = np.linspace(val_errs.min(), val_errs.max(), 1000)
-    best_f1, best_thresh = 0, 0
+    cnn = ErrorCNN().to(config.DEVICE)
+    cnn_optimizer = optim.Adam(cnn.parameters(), lr=1e-3)
+    cnn_criterion = nn.BCELoss()
+    
+    cnn_loader = DataLoader(
+        TensorDataset(val_maps, torch.tensor(val_bin).float()), 
+        batch_size=32, shuffle=True
+    )
+
+    print("Training CNN Spatial Threshold...")
+    for _ in range(15):
+        for m, l in cnn_loader:
+            # Matches the train_step(self, maps, labels, optimizer, criterion) definition
+            cnn.train_step(m.to(config.DEVICE), l.to(config.DEVICE), cnn_optimizer, cnn_criterion)
+
+    # ---------------------------------------------------------
+    # 5. Final Metrics & Thresholding
+    # ---------------------------------------------------------
+    cnn.eval()
+    with torch.no_grad():
+        v_probs = cnn(val_maps.to(config.DEVICE)).cpu().numpy()
+        t_probs = cnn(test_maps.to(config.DEVICE)).cpu().numpy()
+
+    thresholds = np.linspace(v_probs.min(), v_probs.max(), 100)
+    best_f1, opt_thresh = 0, 0.5
     for t in thresholds:
-        preds = (val_errs > t).astype(int)
-        _, _, f1, _ = precision_recall_fscore_support(val_lbls, preds, average='binary', zero_division=0)
-        if f1 > best_f1:
-            best_f1, best_thresh = f1, t
+        f1_score = precision_recall_fscore_support(val_bin, (v_probs > t).astype(int), average='binary', zero_division=0)[2]
+        if f1_score > best_f1: 
+            best_f1, opt_thresh = f1_score, t
 
-    test_preds = [1 if e > best_thresh else 0 for e in test_errs]
-    precision, recall, f1, _ = precision_recall_fscore_support(test_lbls, test_preds, average='binary')
-    
+    final_preds = (t_probs > opt_thresh).astype(int)
+
     # ---------------------------------------------------------
-    # 6. Logging & Visuals
+    # 6. Visualization & Reporting
     # ---------------------------------------------------------
-    l_p = plot_loss(train_losses, "ae_loss.png", MODEL_NAME)
-    cm_p = plot_confusion_matrix(
-        cm=confusion_matrix(test_lbls, test_preds), 
-        target_names=['Normal', 'Anomaly'], 
-        precision=precision, recall=recall, f1=f1,
-        save_path="ae_cm.png", model_name=MODEL_NAME
-    )
-    d_p = plot_error_distribution(
-        train_errors, test_errs[test_lbls==0], test_errs[test_lbls==1], 
-        best_thresh, "ae_dist.png", MODEL_NAME
-    )
-
-    tracker.log_artifact(l_p)
-    tracker.log_artifact(cm_p)
-    tracker.log_artifact(d_p)
-    tracker.log_metrics({"test_f1": float(f1), "optimal_threshold": float(best_thresh)})
+    p, r, f, _ = precision_recall_fscore_support(test_bin, final_preds, average='binary')
     
-    # 7. Five-Category Deep Analysis
-    # ---------------------------------------------------------
-    print("\nGenerating Five-Category Deep Analysis (10 samples each)...")
-    all_preds = (all_test_errors > best_thresh).astype(int)
-
-    def generate_category_heatmaps(indices, category_name, filename):
-        if len(indices) == 0: 
-            print(f"No samples found for category: {category_name}")
-            return None
-            
-        selected_indices = indices[:10]
-        num_imgs = len(selected_indices)
-        
-        all_raw_images = []
-        for imgs, _ in test_loader: 
-            all_raw_images.append(imgs)
-        all_raw_tensor = torch.cat(all_raw_images)
-
-        with torch.no_grad():
-            subset_imgs = all_raw_tensor[selected_indices].to(config.DEVICE)
-            subset_recons = ae_model(subset_imgs).cpu().numpy()
-            subset_origs = subset_imgs.cpu().numpy()
-            subset_scores = all_test_errors[selected_indices]
-            
-        fig, axes = plt.subplots(num_imgs, 3, figsize=(15, 5 * num_imgs))
-        if num_imgs == 1: axes = np.expand_dims(axes, axis=0)
-            
-        fig.suptitle(f"Category: {category_name}\nThreshold: {best_thresh:.4f}", fontsize=16)
-
-        for i in range(num_imgs):
-            orig = np.squeeze(subset_origs[i])
-            recon = np.squeeze(subset_recons[i])
-            heatmap = np.abs(orig - recon) 
-            score = subset_scores[i]
-            
-            axes[i][0].imshow(orig, cmap='gray')
-            axes[i][0].set_title(f"Original (Error: {score:.4f})")
-            axes[i][0].axis('off')
-            
-            axes[i][1].imshow(recon, cmap='gray')
-            axes[i][1].set_title("Reconstruction")
-            axes[i][1].axis('off')
-            
-            sns.heatmap(heatmap, ax=axes[i][2], cmap='rocket', cbar=True)
-            axes[i][2].set_title("Difference Map")
-            axes[i][2].axis('off')
-            
-        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-        target_dir = os.path.join(config.GRAPHS_DIR, MODEL_NAME)
-        os.makedirs(target_dir, exist_ok=True)
-        final_path = os.path.join(target_dir, filename)
-        plt.savefig(final_path, bbox_inches='tight', dpi=150)
-        plt.close(fig)
-        return final_path
-
-    tn_idx = np.where((y_true_all == 0) & (all_preds == 0))[0]
-    fp_idx = np.where((y_true_all == 0) & (all_preds == 1))[0]
-    fn_idx = np.where((y_true_all == 1) & (all_preds == 0))[0]
+    tracker.log_artifact(plot_loss(train_losses, "loss.png", MODEL_NAME))
+    tracker.log_artifact(plot_confusion_matrix(confusion_matrix(test_bin, final_preds), ['Normal', 'Anomaly'], p, r, f, "cm.png", MODEL_NAME))
+    tracker.log_artifact(plot_error_distribution(
+        train_errors=v_probs[val_bin == 0], 
+        test_normal_errors=t_probs[test_bin == 0], 
+        test_anomaly_errors=t_probs[test_bin == 1],
+        threshold=opt_thresh,
+        save_path="cnn_dist.png", 
+        model_name=MODEL_NAME
+    ))
     
-    inv_class_to_idx = {v: k for k, v in test_loader.dataset.dataset.class_to_idx.items()}
-    
-    tracker.log_artifact(generate_category_heatmaps(tn_idx, "TN: Normal correctly identified", "cat1_tn.png"))
-    tracker.log_artifact(generate_category_heatmaps(fp_idx, "FP: Normal flagged as Anomaly", "cat2_fp.png"))
-
-    for class_idx, class_name in inv_class_to_idx.items():
-        if class_name == 'NORMAL': continue
-        specific_fn_idx = [i for i in fn_idx if test_labels_raw[i] == class_idx]
-        filename = f"cat_fn_{class_name.lower()}.png"
-        path = generate_category_heatmaps(specific_fn_idx, f"FN: {class_name} missed by model", filename)
-        if path: tracker.log_artifact(path)
-
-    print("\n" + "="*30)
-    print("FINAL TEST PERFORMANCE")
-    print(classification_report(test_lbls, test_preds, target_names=['Normal', 'Anomaly']))
+    tracker.log_metrics({"f1": float(f), "threshold": float(opt_thresh)})
+    print("\n" + "="*30 + "\nREPORT\n" + classification_report(test_bin, final_preds, target_names=['Normal', 'Anomaly']))

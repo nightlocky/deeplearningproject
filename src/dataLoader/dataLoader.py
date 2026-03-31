@@ -50,14 +50,15 @@ def dataloader(
     test_combined_idx = test_norm_idx[:n_test_normal] + test_anom_idx[:n_test_anomaly]
     test_subset = Subset(full_test_ds, test_combined_idx)
 
-    # 4. Wrap in Loaders (UPDATED FOR GPU)
+    # 4. Wrap in Loaders 
     train_loader = DataLoader(
         train_subset, 
         batch_size=batch_size, 
         shuffle=True,
         num_workers=num_workers,
-        pin_memory=True,         
-        persistent_workers=True
+        pin_memory=True if torch.cuda.is_available() else False, 
+        # Only use persistent_workers if num_workers > 0
+        persistent_workers=True if num_workers > 0 else False
     )
     
     test_loader = DataLoader(
@@ -65,10 +66,10 @@ def dataloader(
         batch_size=batch_size, 
         shuffle=False,
         num_workers=num_workers, 
-        pin_memory=True,         
-        persistent_workers=True
+        pin_memory=True if torch.cuda.is_available() else False,
+        persistent_workers=True if num_workers > 0 else False
     )
-
+    
     print(f"--- Data Summary ---")
     print(f"Training on: {len(train_subset)} Normal images")
     print(f"Testing on:  {n_test_normal} Normal + {min(len(test_anom_idx), n_test_anomaly)} Anomaly images")

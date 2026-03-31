@@ -17,7 +17,7 @@ parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
 # Import Config and Helpers
-import config
+import config as config
 from dataLoader.dataLoader import dataloader
 from helper.visualization_helper import (
     plot_loss, 

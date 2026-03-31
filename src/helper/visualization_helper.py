@@ -5,7 +5,7 @@ import sys
 import seaborn as sns
 import torch
 
-import config
+from src import config
 
 def _prepare_save_path(save_path, model_name=None):
     """
