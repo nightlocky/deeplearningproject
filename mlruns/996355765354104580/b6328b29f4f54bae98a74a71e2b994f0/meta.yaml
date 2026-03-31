@@ -1,0 +1,14 @@
+artifact_uri: file:///workspace/mlruns/996355765354104580/b6328b29f4f54bae98a74a71e2b994f0/artifacts
+end_time: 1774965595353
+entry_point_name: ''
+experiment_id: '996355765354104580'
+lifecycle_stage: active
+run_id: b6328b29f4f54bae98a74a71e2b994f0
+run_name: invincible-bat-67
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1774965303906
+status: 3
+tags: []
+user_id: root

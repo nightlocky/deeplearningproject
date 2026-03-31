@@ -22,12 +22,11 @@ from src.helper.visualization_helper import (
 )
 from src.helper.mlflow_helper import MLFlowTracker
 from src.helper.EarlyStopping import EarlyStopping 
-from src.models.errorCNNClassifier import ErrorCNN
 
 # ---------------------------------------------------------
-# 0. Configuration
+# 0. Configuration & MLP Definition
 # ---------------------------------------------------------
-MODEL_NAME = "unet_resnet34_autoencoder"
+MODEL_NAME = "unet_resnet34_latent_mlp"
 EPOCHS = 50
 RUN_PARAMS = {
     "backbone": "ResNet34",
@@ -37,6 +36,35 @@ RUN_PARAMS = {
     "batch_size": config.BATCH_SIZE,
     "n_train": config.N_TRAIN_NORMAL
 }
+
+class LatentMLP(nn.Module):
+    """A simple Multi-Layer Perceptron to classify 1D Latent Embeddings"""
+    def __init__(self, input_dim):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(256, 64),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(64, 1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        return self.net(x).squeeze(-1)
+        
+    def train_step(self, features, labels, optimizer, criterion):
+        self.train()
+        optimizer.zero_grad()
+        preds = self.forward(features)
+        loss = criterion(preds, labels)
+        loss.backward()
+        optimizer.step()
+        return loss.item()
 
 # ---------------------------------------------------------
 # 1. Data Loading
@@ -72,7 +100,7 @@ scaler = torch.amp.GradScaler('cuda')
 # ---------------------------------------------------------
 # 3. Phase 1: Autoencoder Training
 # ---------------------------------------------------------
-tracker = MLFlowTracker(experiment_name="unet_autoencoder_image_withCNN")
+tracker = MLFlowTracker(experiment_name="unet_autoencoder_latent_mlp")
 best_model_vram = None
 
 with tracker:
@@ -105,63 +133,76 @@ with tracker:
         if early_stopping.early_stop: break
 
     # ---------------------------------------------------------
-    # 4. Phase 2: CNN Spatial Thresholding
+    # 4. Phase 2: Latent Feature Extraction
     # ---------------------------------------------------------
     ae_model.load_state_dict(best_model_vram)
     ae_model.eval()
     
-    def get_spatial_errors(loader):
-        origs, recons, maps, folder_ids = [], [], [], []
+    def get_features_and_maps(loader):
+        origs, recons, maps, latents, folder_ids = [], [], [], [], []
+        # Adaptive pooling to flatten spatial dimensions of the deepest feature map
+        pool = nn.AdaptiveAvgPool2d((1, 1))
+        
         with torch.no_grad():
-            for imgs, lbls in tqdm(loader, desc="Extracting Maps"):
+            for imgs, lbls in tqdm(loader, desc="Extracting Features & Maps"):
                 imgs_device = imgs.to(config.DEVICE)
+                
+                # Extract the deepest latent embedding from the encoder
+                encoder_features = ae_model.encoder(imgs_device)
+                deepest_feature = encoder_features[-1] 
+                latent_vector = pool(deepest_feature).flatten(1) # Shape: [Batch, 512]
+                
+                # Get full reconstruction for visualization purposes
                 recon = ae_model(imgs_device)
                 diff = torch.abs(imgs_device - recon)
                 
+                latents.append(latent_vector.cpu())
                 origs.append(imgs.cpu())
                 recons.append(recon.cpu())
                 maps.append(diff.cpu())
                 folder_ids.extend(lbls.numpy())
-        return torch.cat(origs), torch.cat(recons), torch.cat(maps), np.array(folder_ids)
+                
+        return torch.cat(latents), torch.cat(origs), torch.cat(recons), torch.cat(maps), np.array(folder_ids)
 
-    all_origs, all_recons, all_maps, all_folder_labels = get_spatial_errors(test_loader)
+    all_latents, all_origs, all_recons, all_maps, all_folder_labels = get_features_and_maps(test_loader)
     all_binary_labels = np.array([0 if l == normal_idx else 1 for l in all_folder_labels])
 
-    (val_maps, test_maps, val_bin, test_bin, val_raw, test_raw, val_origs, test_origs, val_recons, test_recons) = train_test_split(
-        all_maps, all_binary_labels, all_folder_labels, all_origs, all_recons, test_size=0.5, stratify=all_binary_labels
+    # Ensure all parallel arrays are split correctly
+    (val_latents, test_latents, val_maps, test_maps, val_bin, test_bin, val_raw, test_raw, val_origs, test_origs, val_recons, test_recons) = train_test_split(
+        all_latents, all_maps, all_binary_labels, all_folder_labels, all_origs, all_recons, test_size=0.5, stratify=all_binary_labels
     )
 
-    cnn = ErrorCNN().to(config.DEVICE)
-    cnn_optimizer = optim.Adam(cnn.parameters(), lr=1e-3)
-    cnn_criterion = nn.BCELoss()
+    mlp = LatentMLP(input_dim=val_latents.shape[1]).to(config.DEVICE)
+    mlp_optimizer = optim.Adam(mlp.parameters(), lr=1e-3, weight_decay=1e-5)
+    mlp_criterion = nn.BCELoss()
     
-    # Restored to strictly use the naturally imbalanced validation data
-    cnn_loader = DataLoader(
-        TensorDataset(val_maps, torch.tensor(val_bin).float()), 
-        batch_size=32, shuffle=True
+    mlp_loader = DataLoader(
+        TensorDataset(val_latents, torch.tensor(val_bin).float()), 
+        batch_size=64, shuffle=True
     )
 
-    print("Training CNN Spatial Threshold (Imbalanced)...")
-    for _ in range(15): 
-        for m, l in cnn_loader:
-            cnn.train_step(m.to(config.DEVICE), l.to(config.DEVICE), cnn_optimizer, cnn_criterion)
+    print("Training MLP on Latent Embeddings (Imbalanced)...")
+    for _ in range(30): # MLP trains much faster, 30 epochs is safe and quick
+        for x, l in mlp_loader:
+            mlp.train_step(x.to(config.DEVICE), l.to(config.DEVICE), mlp_optimizer, mlp_criterion)
 
     # ---------------------------------------------------------
     # 5. Final Metrics & Thresholding
     # ---------------------------------------------------------
     
-    def get_cnn_preds(model, maps):
+    def get_mlp_preds(model, features):
         model.eval()
-        loader = DataLoader(TensorDataset(maps), batch_size=32, shuffle=False)
+        loader = DataLoader(TensorDataset(features), batch_size=128, shuffle=False)
         probs = []
         with torch.no_grad():
-            for (m,) in loader:
-                probs.extend(model(m.to(config.DEVICE)).cpu().numpy())
+            for (x,) in loader:
+                probs.extend(model(x.to(config.DEVICE)).cpu().numpy())
         return np.array(probs)
 
-    v_probs = get_cnn_preds(cnn, val_maps)
-    t_probs = get_cnn_preds(cnn, test_maps)
+    v_probs = get_mlp_preds(mlp, val_latents)
+    t_probs = get_mlp_preds(mlp, test_latents)
 
+    # Calibrate threshold on validation set
     thresholds = np.linspace(v_probs.min(), v_probs.max(), 100)
     best_f1, opt_thresh = 0, 0.5
     for t in thresholds:
@@ -183,7 +224,7 @@ with tracker:
         test_normal_errors=t_probs[test_bin == 0], 
         test_anomaly_errors=t_probs[test_bin == 1],
         threshold=opt_thresh,
-        save_path="cnn_dist.png", 
+        save_path="mlp_dist.png", 
         model_name=MODEL_NAME
     ))
 
@@ -265,7 +306,7 @@ with tracker:
     table.auto_set_font_size(False)
     table.set_fontsize(12)
     
-    plt.title("Prediction Breakdown by Category", fontsize=16, pad=20)
+    plt.title("Prediction Breakdown by Category (Latent MLP)", fontsize=16, pad=20)
     
     save_dir = os.path.join(config.GRAPHS_DIR, MODEL_NAME)
     os.makedirs(save_dir, exist_ok=True)
