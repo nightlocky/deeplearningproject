@@ -1,0 +1,14 @@
+artifact_uri: file:///workspace/mlruns/955683344739610619/4415ad25af57413dae75f06e9dfc5850/artifacts
+end_time: 1774867857247
+entry_point_name: ''
+experiment_id: '955683344739610619'
+lifecycle_stage: active
+run_id: 4415ad25af57413dae75f06e9dfc5850
+run_name: stylish-gull-73
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1774867771025
+status: 3
+tags: []
+user_id: root

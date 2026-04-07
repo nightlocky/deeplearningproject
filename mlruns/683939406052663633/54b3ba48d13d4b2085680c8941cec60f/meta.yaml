@@ -1,0 +1,14 @@
+artifact_uri: file:///workspace/mlruns/683939406052663633/54b3ba48d13d4b2085680c8941cec60f/artifacts
+end_time: 1774971242694
+entry_point_name: ''
+experiment_id: '683939406052663633'
+lifecycle_stage: active
+run_id: 54b3ba48d13d4b2085680c8941cec60f
+run_name: aged-duck-509
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1774970147585
+status: 3
+tags: []
+user_id: root

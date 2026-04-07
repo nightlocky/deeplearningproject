@@ -1,0 +1,7 @@
+artifact_location: file:///workspace/mlruns/683939406052663633
+creation_time: 1774970147299
+experiment_id: '683939406052663633'
+last_update_time: 1774970147299
+lifecycle_stage: active
+name: unet_autoencoder_latent_mlp
+workspace: default

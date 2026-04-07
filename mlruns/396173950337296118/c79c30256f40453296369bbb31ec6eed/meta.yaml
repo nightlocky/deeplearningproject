@@ -1,0 +1,14 @@
+artifact_uri: file:///workspace/mlruns/396173950337296118/c79c30256f40453296369bbb31ec6eed/artifacts
+end_time: 1774932066782
+entry_point_name: ''
+experiment_id: '396173950337296118'
+lifecycle_stage: active
+run_id: c79c30256f40453296369bbb31ec6eed
+run_name: rumbling-snipe-832
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1774931920949
+status: 3
+tags: []
+user_id: root

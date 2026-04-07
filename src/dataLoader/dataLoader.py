@@ -3,7 +3,7 @@ import torch
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
 
-def get_anomaly_dataloaders(
+def dataloader(
     train_path, 
     test_path, 
     n_train_normal=5000, 
@@ -11,7 +11,7 @@ def get_anomaly_dataloaders(
     n_test_anomaly=30, 
     img_size=224, 
     batch_size=32,
-    num_workers=2  # <--- Parameter added here
+    num_workers=16 
 ):
     """
     Creates DataLoaders for Anomaly Detection.
@@ -22,9 +22,9 @@ def get_anomaly_dataloaders(
     # Standard normalization for pretrained models
     transform = transforms.Compose([
         transforms.Resize((img_size, img_size)),
-        transforms.Grayscale(num_output_channels=3), # Ensure 3 channels
+        transforms.Grayscale(num_output_channels=1), # Ensure 3 channels
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        #transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
 
     # 1. Load Datasets
@@ -50,25 +50,26 @@ def get_anomaly_dataloaders(
     test_combined_idx = test_norm_idx[:n_test_normal] + test_anom_idx[:n_test_anomaly]
     test_subset = Subset(full_test_ds, test_combined_idx)
 
-    # 4. Wrap in Loaders (UPDATED FOR GPU)
+    # 4. Wrap in Loaders 
     train_loader = DataLoader(
         train_subset, 
         batch_size=batch_size, 
         shuffle=True,
-        num_workers=num_workers, # <--- Passed into the loader here
-        pin_memory=True,         # <--- Added for fast GPU transfer
-        persistent_workers=True
+        num_workers=num_workers,
+        pin_memory=True if torch.cuda.is_available() else False, 
+        # Only use persistent_workers if num_workers > 0
+        persistent_workers=True if num_workers > 0 else False
     )
     
     test_loader = DataLoader(
         test_subset, 
         batch_size=batch_size, 
         shuffle=False,
-        num_workers=num_workers, # <--- Passed into the loader here
-        pin_memory=True,         # <--- Added for fast GPU transfer
-        persistent_workers=True
+        num_workers=num_workers, 
+        pin_memory=True if torch.cuda.is_available() else False,
+        persistent_workers=True if num_workers > 0 else False
     )
-
+    
     print(f"--- Data Summary ---")
     print(f"Training on: {len(train_subset)} Normal images")
     print(f"Testing on:  {n_test_normal} Normal + {min(len(test_anom_idx), n_test_anomaly)} Anomaly images")

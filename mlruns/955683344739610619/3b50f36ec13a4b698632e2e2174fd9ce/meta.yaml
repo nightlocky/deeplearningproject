@@ -1,0 +1,14 @@
+artifact_uri: file:///workspace/mlruns/955683344739610619/3b50f36ec13a4b698632e2e2174fd9ce/artifacts
+end_time: 1774861218194
+entry_point_name: ''
+experiment_id: '955683344739610619'
+lifecycle_stage: active
+run_id: 3b50f36ec13a4b698632e2e2174fd9ce
+run_name: likeable-colt-205
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1774861126714
+status: 3
+tags: []
+user_id: root

@@ -1,0 +1,14 @@
+artifact_uri: file:///workspace/mlruns/996355765354104580/001d276b40b34b94a680de6edbad892c/artifacts
+end_time: 1774969711488
+entry_point_name: ''
+experiment_id: '996355765354104580'
+lifecycle_stage: active
+run_id: 001d276b40b34b94a680de6edbad892c
+run_name: polite-cub-205
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1774968463874
+status: 3
+tags: []
+user_id: root

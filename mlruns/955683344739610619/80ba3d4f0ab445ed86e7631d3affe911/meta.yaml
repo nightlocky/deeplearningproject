@@ -1,0 +1,14 @@
+artifact_uri: file:///workspace/mlruns/955683344739610619/80ba3d4f0ab445ed86e7631d3affe911/artifacts
+end_time: 1774868246221
+entry_point_name: ''
+experiment_id: '955683344739610619'
+lifecycle_stage: active
+run_id: 80ba3d4f0ab445ed86e7631d3affe911
+run_name: smiling-bee-715
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1774868156592
+status: 3
+tags: []
+user_id: root

@@ -1,0 +1,14 @@
+artifact_uri: file:///workspace/mlruns/996355765354104580/bc711570bcd14c8cb9e62add3e793494/artifacts
+end_time: 1774968291150
+entry_point_name: ''
+experiment_id: '996355765354104580'
+lifecycle_stage: active
+run_id: bc711570bcd14c8cb9e62add3e793494
+run_name: defiant-newt-262
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1774968218943
+status: 3
+tags: []
+user_id: root

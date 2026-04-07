@@ -1,0 +1,14 @@
+artifact_uri: file:///workspace/mlruns/396173950337296118/1718a9b874b64205b36a26a8504de6f5/artifacts
+end_time: 1774885553305
+entry_point_name: ''
+experiment_id: '396173950337296118'
+lifecycle_stage: active
+run_id: 1718a9b874b64205b36a26a8504de6f5
+run_name: redolent-skink-352
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1774885026165
+status: 3
+tags: []
+user_id: root
