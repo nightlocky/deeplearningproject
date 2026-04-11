@@ -1,9 +1,6 @@
 data
 src/mlflow.db
 venv
-src/__pycache__
-src/dataLoader/__pycache__
 src/mlruns
-src/__pycache__
 connect.bat
-src/helper/__pycache__
+__pycache__/
