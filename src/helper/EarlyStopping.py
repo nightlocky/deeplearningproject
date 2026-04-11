@@ -29,4 +29,4 @@ class EarlyStopping:
     def save_checkpoint(self, model):
         if self.verbose:
             print(f"Loss improved. Saving model checkpoint to {self.path}")
-        #torch.save(model.state_dict(), self.path)
+        torch.save(model.state_dict(), self.path)
