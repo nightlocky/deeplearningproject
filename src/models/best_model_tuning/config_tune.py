@@ -4,12 +4,12 @@ EXPERIMENT_NAME = "best_model_tuning"
 
 # --- PHASE CONTROL ---
 # Set this to 1, 2, or 3 to run only that specific part of the tuning
-CURRENT_PHASE = 1 
+CURRENT_PHASE = 3 
 
 # --- WINNERS FROM PREVIOUS PHASES ---
 # Update these as you finish each phase
 BEST_BACKBONE_SO_FAR = "resnet50"
-BEST_ALPHA_SO_FAR = 1.0
+BEST_ALPHA_SO_FAR = 0.5
 
 # --- STEP 1: Backbones to Test ---
 BACKBONES = ["resnet18", "resnet34", "resnet50"]
