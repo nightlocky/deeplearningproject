@@ -8,7 +8,7 @@ def dataloader(
     test_path, 
     n_train_normal=5000, 
     n_test_normal=250, 
-    n_test_anomaly=30, 
+    n_test_anomaly_per_class=10,
     img_size=224, 
     batch_size=32,
     num_workers=16 
@@ -16,7 +16,7 @@ def dataloader(
     """
     Creates DataLoaders for Anomaly Detection.
     - Train: Only 'NORMAL' class images.
-    - Test: A mix of 'NORMAL' and 'Anomaly' (everything else) images.
+    - Test: A mix of 'NORMAL' and an equal, stratified amount of Anomaly images.
     """
     
     # Standard normalization for pretrained models
@@ -24,7 +24,6 @@ def dataloader(
         transforms.Resize((img_size, img_size)),
         transforms.Grayscale(num_output_channels=1), # Ensure 3 channels
         transforms.ToTensor(),
-        #transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
 
     # 1. Load Datasets
@@ -33,21 +32,31 @@ def dataloader(
     
     normal_idx = full_train_ds.class_to_idx['NORMAL']
 
-    # 2. Filter Indices
-    def get_indices(dataset, is_normal=True):
-        if is_normal:
-            return [i for i, (_, lbl) in enumerate(dataset.samples) if lbl == normal_idx]
-        else:
-            return [i for i, (_, lbl) in enumerate(dataset.samples) if lbl != normal_idx]
-
-    train_norm_idx = get_indices(full_train_ds, is_normal=True)
-    test_norm_idx = get_indices(full_test_ds, is_normal=True)
-    test_anom_idx = get_indices(full_test_ds, is_normal=False)
-
-    # 3. Create Subsets with requested sizes
-    train_subset = Subset(full_train_ds, train_norm_idx[:n_train_normal])
+    # 2. Filter Indices (UPDATED FOR STRATIFIED SAMPLING)
+    # Get all training normal indices
+    train_norm_idx = [i for i, (_, lbl) in enumerate(full_train_ds.samples) if lbl == normal_idx]
     
-    test_combined_idx = test_norm_idx[:n_test_normal] + test_anom_idx[:n_test_anomaly]
+    # Group test indices by class
+    test_class_indices = {lbl: [] for lbl in full_test_ds.class_to_idx.values()}
+    for i, (_, lbl) in enumerate(full_test_ds.samples):
+        test_class_indices[lbl].append(i)
+
+    # Extract test normal indices
+    test_norm_idx = test_class_indices[normal_idx][:n_test_normal]
+
+    # Extract exactly N anomaly images from EACH disease class
+    test_anom_idx = []
+    anomaly_count = 0
+    for lbl, indices in test_class_indices.items():
+        if lbl != normal_idx:
+            # Grab the specific amount for this specific disease
+            selected_indices = indices[:n_test_anomaly_per_class]
+            test_anom_idx.extend(selected_indices)
+            anomaly_count += len(selected_indices)
+
+    # 3. Create Subsets
+    train_subset = Subset(full_train_ds, train_norm_idx[:n_train_normal])
+    test_combined_idx = test_norm_idx + test_anom_idx
     test_subset = Subset(full_test_ds, test_combined_idx)
 
     # 4. Wrap in Loaders 
@@ -57,7 +66,6 @@ def dataloader(
         shuffle=True,
         num_workers=num_workers,
         pin_memory=True if torch.cuda.is_available() else False, 
-        # Only use persistent_workers if num_workers > 0
         persistent_workers=True if num_workers > 0 else False
     )
     
@@ -72,6 +80,6 @@ def dataloader(
     
     print(f"--- Data Summary ---")
     print(f"Training on: {len(train_subset)} Normal images")
-    print(f"Testing on:  {n_test_normal} Normal + {min(len(test_anom_idx), n_test_anomaly)} Anomaly images")
+    print(f"Testing on:  {len(test_norm_idx)} Normal + {anomaly_count} Anomaly images ({len(test_class_indices)-1} classes * {n_test_anomaly_per_class})")
     
     return train_loader, test_loader, normal_idx

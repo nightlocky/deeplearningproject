@@ -75,7 +75,7 @@ train_loader, test_loader, normal_idx = dataloader(
     img_size=config.IMG_SIZE,
     n_train_normal=config.N_TRAIN_NORMAL, 
     n_test_normal=config.N_TEST_NORMAL, 
-    n_test_anomaly=config.N_TEST_ANOMALY,   
+    n_test_anomaly_per_class=config.N_TEST_ANOMALY_PER_CLASS,
     batch_size=config.BATCH_SIZE,
     num_workers=32
 )
