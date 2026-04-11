@@ -234,11 +234,20 @@ if __name__ == "__main__":
     tracker = MLFlowTracker(experiment_name=tune_config.EXPERIMENT_NAME)
 
     if tune_config.CURRENT_PHASE == 1:
-        for backbone in tune_config.BACKBONES:
-            run_name = f"backbone/{backbone}"
-            ae_path = train_ae(backbone, 1.0, run_name, train_loader)
-            splits = extract_features(backbone, ae_path, test_loader, normal_idx)
-            train_and_evaluate_mlp(splits, [256, 64], 0.3, run_name, normal_idx, tracker)
+            for backbone in tune_config.BACKBONES:
+                run_name = f"backbone/{backbone}"
+                ae_path = train_ae(backbone, 1.0, run_name, train_loader)
+                splits = extract_features(backbone, ae_path, test_loader, normal_idx)
+                
+                # Using defaults from tune_config instead of hardcoding [256, 64] and 0.3
+                train_and_evaluate_mlp(
+                    splits, 
+                    tune_config.DEFAULT_MLP_ARCH, 
+                    tune_config.DEFAULT_MLP_DROPOUT, 
+                    run_name, 
+                    normal_idx, 
+                    tracker
+                )
 
     elif tune_config.CURRENT_PHASE == 2:
         bb = tune_config.BEST_BACKBONE_SO_FAR
@@ -246,11 +255,23 @@ if __name__ == "__main__":
             run_name = f"loss_functions/{alpha}"
             ae_path = train_ae(bb, alpha, run_name, train_loader)
             splits = extract_features(bb, ae_path, test_loader, normal_idx)
-            train_and_evaluate_mlp(splits, [256, 64], 0.3, run_name, normal_idx, tracker)
+            
+            # Using defaults from tune_config
+            train_and_evaluate_mlp(
+                splits, 
+                tune_config.DEFAULT_MLP_ARCH, 
+                tune_config.DEFAULT_MLP_DROPOUT, 
+                run_name, 
+                normal_idx, 
+                tracker
+            )
 
     elif tune_config.CURRENT_PHASE == 3:
-        bb, alpha = tune_config.BEST_BACKBONE_SO_FAR, tune_config.BEST_ALPHA_SO_FAR
-        ae_path = train_ae(bb, alpha, "MLP_Preload_Winner", train_loader, save_graphs=False)
+        bb = tune_config.BEST_BACKBONE_SO_FAR
+        ae_path = tune_config.BEST_AE_WEIGHTS_PATH  # Calling the path from config!
+        
+        print(f"\n--- Loading Pre-trained AE from: {ae_path} ---")
+        
         best_splits = extract_features(bb, ae_path, test_loader, normal_idx)
         best_f1, best_mlp_state = -1, None
         
@@ -258,7 +279,15 @@ if __name__ == "__main__":
             for drop in tune_config.MLP_DROPOUTS:
                 run_name = f"MLP/{'_'.join(map(str, arch))}_drop_{drop}"
                 f1, m_state = train_and_evaluate_mlp(best_splits, arch, drop, run_name, normal_idx, tracker)
-                if f1 > best_f1: best_f1, best_mlp_state = f1, m_state
+                
+                if f1 > best_f1: 
+                    best_f1, best_mlp_state = f1, m_state
+
+        if best_mlp_state:
+            torch.save(best_mlp_state, os.path.join(config.TUNING_DIR, tune_config.EXPERIMENT_NAME, "best_final_mlp.pth"))
+            print(f"\n======================================")
+            print(f" PHASE 3 COMPLETE | Best Final F1: {best_f1:.4f}")
+            print(f"======================================")
 
         if best_mlp_state:
             torch.save(best_mlp_state, os.path.join(config.TUNING_DIR, tune_config.EXPERIMENT_NAME, "best_final_mlp.pth"))
