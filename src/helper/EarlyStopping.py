@@ -1,5 +1,4 @@
 import torch
-import numpy as np
 
 class EarlyStopping:
     def __init__(self, patience=10, min_delta=0.01, path='checkpoint.pth', verbose=True):
@@ -10,11 +9,12 @@ class EarlyStopping:
         self.counter = 0
         self.best_loss = None
         self.early_stop = False
+        self.best_model_weights = None  # NEW: Store weights in memory
 
     def __call__(self, val_loss, model):
         if self.best_loss is None:
             self.best_loss = val_loss
-            self.save_checkpoint(model)
+            self.update_best_weights(model)
         elif val_loss > self.best_loss - self.min_delta:
             self.counter += 1
             if self.verbose:
@@ -23,10 +23,16 @@ class EarlyStopping:
                 self.early_stop = True
         else:
             self.best_loss = val_loss
-            self.save_checkpoint(model)
+            self.update_best_weights(model)
             self.counter = 0
 
-    def save_checkpoint(self, model):
+    def update_best_weights(self, model):
+        self.best_model_weights = {k: v.cpu().clone() for k, v in model.state_dict().items()}
         if self.verbose:
-            print(f"Loss improved. Saving model checkpoint to {self.path}")
-        torch.save(model.state_dict(), self.path)
+            print(f"New best loss found. Best weights updated in memory.")
+
+    def save_checkpoint(self):
+        if self.best_model_weights is not None:
+            if self.verbose:
+                print(f"Saving FINAL model checkpoint to {self.path}")
+            torch.save(self.best_model_weights, self.path)

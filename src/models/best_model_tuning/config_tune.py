@@ -2,27 +2,24 @@
 
 EXPERIMENT_NAME = "best_model_tuning"
 
-# --- Step 1: Backbones to Test ---
-# We are actively tuning this, so we leave the full list.
+# --- PHASE CONTROL ---
+# Set this to 1, 2, or 3 to run only that specific part of the tuning
+CURRENT_PHASE = 1 
+
+# --- WINNERS FROM PREVIOUS PHASES ---
+# Update these as you finish each phase
+BEST_BACKBONE_SO_FAR = "resnet50"
+BEST_ALPHA_SO_FAR = 1.0
+
+# --- STEP 1: Backbones to Test ---
 BACKBONES = ["resnet18", "resnet34", "resnet50"]
 
-# --- Step 2: Loss Functions to Test ---
-# Formula: Loss = (alpha * SSIM_Loss) + ((1 - alpha) * L1_Loss)
-# LOSS_ALPHAS = [1.0, 0.8, 0.5] 
-LOSS_ALPHAS = [1.0]  # Baseline: Pure SSIM
+# --- STEP 2: Loss Functions to Test ---
+LOSS_ALPHAS = [1.0, 0.8, 0.5] 
 
-# --- Step 3: MLP Hyperparameters to Test ---
-# Each list represents the hidden layer dimensions. 
-# e.g., [256, 64] = 2 hidden layers. [512] = 1 hidden layer.
-# MLP_ARCHITECTURES = [
-#     [512],            # Shallow & Wide
-#     [256, 64],        # Your Baseline
-#     [512, 128, 32]    # Deep
-# ]
-# MLP_DROPOUTS = [0.1, 0.3, 0.5]
-
-MLP_ARCHITECTURES = [[256, 64]]  # Baseline architecture
-MLP_DROPOUTS = [0.3]             # Baseline dropout
+# --- STEP 3: MLP Hyperparameters to Test ---
+MLP_ARCHITECTURES = [[512], [256, 64], [512, 128, 32]]
+MLP_DROPOUTS = [0.1, 0.3, 0.5]
 
 # --- Tuning Hyperparameters ---
 TUNING_EPOCHS = 30           

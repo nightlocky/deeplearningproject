@@ -7,7 +7,7 @@ import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 import segmentation_models_pytorch as smp
-from sklearn.metrics import classification_report, confusion_matrix, precision_recall_fscore_support
+from sklearn.metrics import confusion_matrix, precision_recall_fscore_support, roc_auc_score, average_precision_score
 from sklearn.model_selection import train_test_split
 from torch.utils.data import TensorDataset, DataLoader
 from tqdm import tqdm
@@ -15,21 +15,23 @@ from torchmetrics.functional import structural_similarity_index_measure as ssim
 
 # Custom Imports
 from src import config
-from src import config_tune  
+from src.models.best_model_tuning import config_tune as tune_config
 from src.dataLoader.dataLoader import dataloader
 from src.helper.visualization_helper import plot_loss, plot_confusion_matrix, plot_error_distribution
 from src.helper.mlflow_helper import MLFlowTracker
 from src.helper.EarlyStopping import EarlyStopping 
-from latent_mlp import LatentMLP
+from src.models.best_model_tuning.latent_mlp import LatentMLP
 
 # ---------------------------------------------------------
 # 1. Phase 1: Train Autoencoder
 # ---------------------------------------------------------
-def train_ae(backbone, loss_alpha, run_name, train_loader):
+def train_ae(backbone, loss_alpha, run_name, train_loader, save_graphs=True):
     print(f"\n--- Training Autoencoder: {run_name} ---")
-    run_dir = os.path.join(config.TUNING_DIR, config_tune.EXPERIMENT_NAME, run_name)
+    run_dir = os.path.join(config.TUNING_DIR, tune_config.EXPERIMENT_NAME, run_name)
     os.makedirs(run_dir, exist_ok=True)
-    model_save_path = os.path.join(run_dir, f"{run_name}_best_ae.pth")
+    
+    safe_name = run_name.replace("/", "_").replace("\\", "_")
+    model_save_path = os.path.join(run_dir, f"{safe_name}_best_ae.pth")
 
     ae_model = smp.Unet(
         encoder_name=backbone, encoder_weights="imagenet",
@@ -37,8 +39,8 @@ def train_ae(backbone, loss_alpha, run_name, train_loader):
     ).to(config.DEVICE)
 
     optimizer = optim.Adam([
-        {'params': ae_model.encoder.parameters(), 'lr': config_tune.ENCODER_LR},
-        {'params': list(ae_model.decoder.parameters()) + list(ae_model.segmentation_head.parameters()), 'lr': config_tune.DECODER_LR}
+        {'params': ae_model.encoder.parameters(), 'lr': tune_config.ENCODER_LR},
+        {'params': list(ae_model.decoder.parameters()) + list(ae_model.segmentation_head.parameters()), 'lr': tune_config.DECODER_LR}
     ])
 
     early_stopping = EarlyStopping(patience=10, path=model_save_path)
@@ -48,7 +50,7 @@ def train_ae(backbone, loss_alpha, run_name, train_loader):
 
     train_losses = []
     
-    for epoch in range(config_tune.TUNING_EPOCHS):
+    for epoch in range(tune_config.TUNING_EPOCHS):
         ae_model.train()
         batch_losses = []
         for imgs, _ in tqdm(train_loader, desc=f"AE Epoch {epoch+1}"):
@@ -70,11 +72,13 @@ def train_ae(backbone, loss_alpha, run_name, train_loader):
         train_losses.append(epoch_loss)
         scheduler.step(epoch_loss)
         early_stopping(epoch_loss, ae_model)
-
-        if early_stopping.early_stop: 
-            break
+        if early_stopping.early_stop: break
             
-    plot_loss(train_losses, os.path.join(run_dir, "loss.png"), run_name)
+    early_stopping.save_checkpoint() 
+
+    if save_graphs:
+        plot_loss(train_losses, os.path.join(run_dir, "loss.png"), safe_name)
+        
     del ae_model, optimizer
     torch.cuda.empty_cache()
     return model_save_path
@@ -84,15 +88,11 @@ def train_ae(backbone, loss_alpha, run_name, train_loader):
 # ---------------------------------------------------------
 def extract_features(backbone, model_path, test_loader, normal_idx):
     print("\n--- Extracting Features ---")
-    ae_model = smp.Unet(
-        encoder_name=backbone, encoder_weights=None, 
-        in_channels=1, classes=1, activation="sigmoid"
-    ).to(config.DEVICE)
-    
+    ae_model = smp.Unet(encoder_name=backbone, encoder_weights=None, in_channels=1, classes=1, activation="sigmoid").to(config.DEVICE)
     ae_model.load_state_dict(torch.load(model_path, weights_only=True))
     ae_model.eval()
 
-    origs, recons, maps, latents, folder_ids = [], [], [], [], []
+    latents, maps, folder_ids, origs, recons = [], [], [], [], []
     pool = nn.AdaptiveAvgPool2d((1, 1))
     
     with torch.no_grad():
@@ -102,171 +102,163 @@ def extract_features(backbone, model_path, test_loader, normal_idx):
             latent_vector = pool(encoder_features[-1]).flatten(1)
             recon = ae_model(imgs_device)
             diff = torch.abs(imgs_device - recon)
+            latents.append(latent_vector.cpu()); maps.append(diff.cpu()); folder_ids.extend(lbls.numpy())
+            origs.append(imgs.cpu()); recons.append(recon.cpu())
             
-            latents.append(latent_vector.cpu())
-            origs.append(imgs.cpu())
-            recons.append(recon.cpu())
-            maps.append(diff.cpu())
-            folder_ids.extend(lbls.numpy())
-            
-    all_latents, all_origs, all_recons, all_maps, all_folder_labels = torch.cat(latents), torch.cat(origs), torch.cat(recons), torch.cat(maps), np.array(folder_ids)
-    all_binary_labels = np.array([0 if l == normal_idx else 1 for l in all_folder_labels])
+    all_latents = torch.cat(latents)
+    all_binary_labels = np.array([0 if l == normal_idx else 1 for l in folder_ids])
 
-    del ae_model
-    torch.cuda.empty_cache()
-
-    return train_test_split(
-        all_latents, all_maps, all_binary_labels, all_folder_labels, all_origs, all_recons, 
-        test_size=0.5, stratify=all_binary_labels
-    )
+    del ae_model; torch.cuda.empty_cache()
+    return train_test_split(all_latents, torch.cat(maps), all_binary_labels, np.array(folder_ids), torch.cat(origs), torch.cat(recons), test_size=0.5, stratify=all_binary_labels)
 
 # ---------------------------------------------------------
 # 3. Phase 3: Train & Evaluate MLP
 # ---------------------------------------------------------
-def train_and_evaluate_mlp(data_splits, hidden_layers, dropout, run_name, normal_idx, tracker):
+def train_and_evaluate_mlp(data_splits, hidden_layers, dropout, run_name, normal_idx, tracker, save_graphs=True):
     print(f"\n--- Evaluating MLP: {run_name} ---")
-    (val_latents, test_latents, val_maps, test_maps, val_bin, test_bin, val_raw, test_raw, val_origs, test_origs, val_recons, test_recons) = data_splits
+    (val_lat, test_lat, val_maps, test_maps, val_bin, test_bin, val_raw, test_raw, val_orig, test_orig, val_recon, test_recon) = data_splits
     
-    run_dir = os.path.join(config.TUNING_DIR, config_tune.EXPERIMENT_NAME, run_name)
+    run_dir = os.path.join(config.TUNING_DIR, tune_config.EXPERIMENT_NAME, run_name)
     os.makedirs(run_dir, exist_ok=True)
+    safe_name = run_name.replace("/", "_")
     samples_dir = os.path.join(run_dir, "samples")
     os.makedirs(samples_dir, exist_ok=True)
 
-    mlp = LatentMLP(input_dim=val_latents.shape[1], hidden_layers=hidden_layers, dropout_rate=dropout).to(config.DEVICE)
-    mlp_optimizer = optim.Adam(mlp.parameters(), lr=1e-3, weight_decay=1e-5)
-    mlp_criterion = nn.BCELoss()
-    
-    mlp_loader = DataLoader(TensorDataset(val_latents, torch.tensor(val_bin).float()), batch_size=64, shuffle=True)
+    # --- Visualization Helper ---
+    def save_sample_visualization(orig, recon, diff, true_bin, pred_bin, score, class_id, filename):
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        axes[0].imshow(orig.squeeze().numpy(), cmap='gray'); axes[0].set_title("Original OCT"); axes[0].axis('off')
+        axes[1].imshow(recon.squeeze().numpy(), cmap='gray'); axes[1].set_title("Autoencoder Recon"); axes[1].axis('off')
+        sns.heatmap(diff.squeeze().numpy(), cmap='jet', ax=axes[2], cbar=True); axes[2].set_title(f"Diff Map (Score: {score:.4f})"); axes[2].axis('off')
+        status = "Correct" if true_bin == pred_bin else "Incorrect"
+        fig.suptitle(f"Class: {int(class_id)} | True: {true_bin} | Pred: {pred_bin} ({status})", fontsize=14)
+        full_path = os.path.join(samples_dir, filename)
+        plt.tight_layout(); plt.savefig(full_path); plt.close(fig)
+        return full_path
 
-    for _ in range(config_tune.MLP_EPOCHS):
-        for x, l in mlp_loader:
-            mlp.train_step(x.to(config.DEVICE), l.to(config.DEVICE), mlp_optimizer, mlp_criterion)
+    # --- MLP Training ---
+    mlp = LatentMLP(input_dim=val_lat.shape[1], hidden_layers=hidden_layers, dropout_rate=dropout).to(config.DEVICE)
+    optimizer = optim.Adam(mlp.parameters(), lr=1e-3)
+    criterion = nn.BCELoss()
+    loader = DataLoader(TensorDataset(val_lat, torch.tensor(val_bin).float()), batch_size=64, shuffle=True)
+    for _ in range(tune_config.MLP_EPOCHS):
+        for x, l in loader: mlp.train_step(x.to(config.DEVICE), l.to(config.DEVICE), optimizer, criterion)
 
-    def get_mlp_preds(model, features):
-        model.eval()
-        loader = DataLoader(TensorDataset(features), batch_size=128, shuffle=False)
-        probs = []
+    # --- Predictions ---
+    def get_preds(model, features):
+        model.eval(); probs = []
         with torch.no_grad():
-            for (x,) in loader:
+            for (x,) in DataLoader(TensorDataset(features), batch_size=128): 
                 probs.extend(model(x.to(config.DEVICE)).cpu().numpy())
         return np.array(probs)
 
-    v_probs = get_mlp_preds(mlp, val_latents)
-    t_probs = get_mlp_preds(mlp, test_latents)
-
-    thresholds = np.linspace(v_probs.min(), v_probs.max(), 100)
-    best_f1, opt_thresh = 0, 0.5
-    for t in thresholds:
-        f1_score = precision_recall_fscore_support(val_bin, (v_probs > t).astype(int), average='binary', zero_division=0)[2]
-        if f1_score > best_f1: 
-            best_f1, opt_thresh = f1_score, t
-
-    final_preds = (t_probs > opt_thresh).astype(int)
-    p, r, final_test_f1, _ = precision_recall_fscore_support(test_bin, final_preds, average='binary')
+    v_probs, t_probs = get_preds(mlp, val_lat), get_preds(mlp, test_lat)
     
-    # --- Artifact Logging ---
-    with tracker:
-        tracker.log_artifact(plot_confusion_matrix(confusion_matrix(test_bin, final_preds), ['Normal', 'Anomaly'], p, r, final_test_f1, os.path.join(run_dir, "cm.png"), run_name))
-        tracker.log_artifact(plot_error_distribution(v_probs[val_bin == 0], t_probs[test_bin == 0], t_probs[test_bin == 1], opt_thresh, os.path.join(run_dir, "mlp_dist.png"), run_name))
+    # --- Threshold Search (Optimizing for F1) ---
+    best_f1, opt_thresh = 0, 0.5
+    for t in np.linspace(v_probs.min(), v_probs.max(), 100):
+        f1_temp = precision_recall_fscore_support(val_bin, (v_probs > t).astype(int), average='binary', zero_division=0)[2]
+        if f1_temp > best_f1: best_f1, opt_thresh = f1_temp, t
 
-        def save_sample_visualization(orig, recon, diff, true_bin, pred_bin, score, class_id, save_name):
-            fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-            axes[0].imshow(orig.squeeze().numpy(), cmap='gray'); axes[0].axis('off')
-            axes[1].imshow(recon.squeeze().numpy(), cmap='gray'); axes[1].axis('off')
-            sns.heatmap(diff.squeeze().numpy(), cmap='jet', ax=axes[2], cbar=True); axes[2].axis('off')
-            status = "Correct" if true_bin == pred_bin else "Incorrect"
-            fig.suptitle(f"Original Class ID: {int(class_id)} | True Binary: {true_bin} | Pred: {pred_bin} ({status})", fontsize=16)
-            plt.tight_layout()
-            full_path = os.path.join(samples_dir, save_name)
-            plt.savefig(full_path)
-            plt.close(fig)
-            return full_path
+    # --- Final Metric Calculations ---
+    final_preds = (t_probs > opt_thresh).astype(int)
+    
+    # Standard P, R, F1
+    precision, recall, f1, _ = precision_recall_fscore_support(test_bin, final_preds, average='binary', zero_division=0)
+    
+    # Specificity (True Negative Rate)
+    tn, fp, fn, tp = confusion_matrix(test_bin, final_preds).ravel()
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+    
+    # AUC Metrics (Uses raw probabilities, not labels)
+    auc_roc = roc_auc_score(test_bin, t_probs)
+    auc_pr = average_precision_score(test_bin, t_probs)
 
-        # False Negatives & Table Generation...
-        idx_fn = np.where((test_bin == 1) & (final_preds == 0))[0]
-        if len(idx_fn) > 0:
-            for rank, i in enumerate(idx_fn[np.argsort(t_probs[idx_fn])][:5]):
-                tracker.log_artifact(save_sample_visualization(test_origs[i], test_recons[i], test_maps[i], test_bin[i], final_preds[i], t_probs[i], test_raw[i], f"{run_name}_fn_{rank+1}.png"))
+    # --- MLFlow Tracking ---
+    tracker.start_run(run_name=run_name)
+    try:
+        tracker.log_params({
+            "mlp_layers": str(hidden_layers), 
+            "mlp_dropout": dropout, 
+            "latent_dim": val_lat.shape[1],
+            "phase": run_name.split('/')[0]
+        })
+        
+        # LOGGING ALL 6 KEY METRICS
+        tracker.log_metrics({
+            "test_f1": float(f1),
+            "test_precision": float(precision),
+            "test_recall": float(recall),
+            "test_specificity": float(specificity),
+            "test_auc_roc": float(auc_roc),
+            "test_auc_pr": float(auc_pr),
+            "opt_threshold": float(opt_thresh)
+        })
 
-        fig, ax = plt.subplots(figsize=(10, 4))
-        ax.axis('off')
-        table_data = [[f"Class {int(cls)}", "Normal" if cls == normal_idx else "Disease", np.sum(final_preds[test_raw == cls] == (0 if cls == normal_idx else 1)), np.sum(final_preds[test_raw == cls] == (1 if cls == normal_idx else 0))] for cls in np.unique(test_raw)]
-        table = ax.table(cellText=table_data, colLabels=['Original Class', 'True Type', 'Correct', 'Wrong'], loc='center', cellLoc='center')
-        table.scale(1, 1.8)
-        table_path = os.path.join(run_dir, "prediction_breakdown.png")
-        plt.savefig(table_path, bbox_inches='tight')
-        plt.close()
-        tracker.log_artifact(table_path)
-        tracker.log_metrics({"test_f1": float(final_test_f1), "threshold": float(opt_thresh)})
+        if save_graphs:
+            tracker.log_artifact(plot_confusion_matrix(confusion_matrix(test_bin, final_preds), ['Normal', 'Anomaly'], precision, recall, f1, os.path.join(run_dir, "cm.png"), safe_name))
+            tracker.log_artifact(plot_error_distribution(v_probs[val_bin == 0], t_probs[test_bin == 0], t_probs[test_bin == 1], opt_thresh, os.path.join(run_dir, "mlp_dist.png"), safe_name))
+            
+            # Malfunction Visualization
+            idx_fn = np.where((test_bin == 1) & (final_preds == 0))[0] 
+            if len(idx_fn) > 0:
+                worst_fn_indices = idx_fn[np.argsort(t_probs[idx_fn])][:5]
+                for rank, i in enumerate(worst_fn_indices):
+                    img_path = save_sample_visualization(
+                        test_orig[i], test_recon[i], test_maps[i], 
+                        test_bin[i], final_preds[i], t_probs[i], test_raw[i], 
+                        f"malfunction_FN_rank{rank+1}_class{int(test_raw[i])}.png"
+                    )
+                    tracker.log_artifact(img_path)
+    finally:
+        tracker.end_run()
 
-    del mlp
-    gc.collect()
-    torch.cuda.empty_cache()
-    return final_test_f1
-
+    mlp_state = {k: v.cpu().clone() for k, v in mlp.state_dict().items()}
+    del mlp; gc.collect(); torch.cuda.empty_cache()
+    return f1, mlp_state
 
 # ---------------------------------------------------------
-# Main Execution Block
+# Main Control Loop
 # ---------------------------------------------------------
 if __name__ == "__main__":
-    
-    print("Loading datasets...")
     train_loader, test_loader, normal_idx = dataloader(
-        train_path=config.TRAIN_PATH, test_path=config.TEST_PATH, img_size=config.IMG_SIZE,
-        n_train_normal=config.TEST_N_TRAIN_NORMAL, n_test_normal=config.TEST_N_TEST_NORMAL, 
-        n_test_anomaly_per_class=config.TEST_N_TEST_ANOMALY_PER_CLASS, batch_size=config.BATCH_SIZE, num_workers=16
+        train_path=config.TRAIN_PATH,
+        test_path=config.TEST_PATH,
+        img_size=config.IMG_SIZE,
+        n_train_normal=config.N_TRAIN_NORMAL,
+        n_test_normal=config.N_TEST_NORMAL, 
+        n_test_anomaly_per_class=config.N_TEST_ANOMALY_PER_CLASS,
+        batch_size=config.BATCH_SIZE, 
+        num_workers=16
     )
+    tracker = MLFlowTracker(experiment_name=tune_config.EXPERIMENT_NAME)
 
-    tracker = MLFlowTracker(experiment_name=config_tune.EXPERIMENT_NAME)
-    results = {}
-    
-    # --- STEP 1: TUNE BACKBONE ---
-    best_backbone, best_bb_f1 = None, -1
-    for backbone in config_tune.BACKBONES:
-        run_name = f"step1_bb_{backbone}"
-        ae_path = train_ae(backbone, 1.0, run_name, train_loader)
-        splits = extract_features(backbone, ae_path, test_loader, normal_idx)
-        f1 = train_and_evaluate_mlp(splits, [256, 64], 0.3, run_name, normal_idx, tracker)
-        results[run_name] = f1
-        if f1 > best_bb_f1: best_backbone, best_bb_f1 = backbone, f1
-            
-    print(f"\n Best Backbone: {best_backbone} (F1: {best_bb_f1:.4f})\n")
+    if tune_config.CURRENT_PHASE == 1:
+        for backbone in tune_config.BACKBONES:
+            run_name = f"backbone/{backbone}"
+            ae_path = train_ae(backbone, 1.0, run_name, train_loader)
+            splits = extract_features(backbone, ae_path, test_loader, normal_idx)
+            train_and_evaluate_mlp(splits, [256, 64], 0.3, run_name, normal_idx, tracker)
 
-    # --- STEP 2: TUNE LOSS ---
-    best_alpha, best_loss_f1 = None, -1
-    best_ae_path = None 
-    for alpha in config_tune.LOSS_ALPHAS:
-        run_name = f"step2_loss_{alpha}"
-        ae_path = train_ae(best_backbone, alpha, run_name, train_loader)
-        splits = extract_features(best_backbone, ae_path, test_loader, normal_idx)
-        f1 = train_and_evaluate_mlp(splits, [256, 64], 0.3, run_name, normal_idx, tracker)
-        results[run_name] = f1
-        if f1 > best_loss_f1: 
-            best_alpha, best_loss_f1 = alpha, f1
-            best_ae_path = ae_path 
+    elif tune_config.CURRENT_PHASE == 2:
+        bb = tune_config.BEST_BACKBONE_SO_FAR
+        for alpha in tune_config.LOSS_ALPHAS:
+            run_name = f"loss_functions/{alpha}"
+            ae_path = train_ae(bb, alpha, run_name, train_loader)
+            splits = extract_features(bb, ae_path, test_loader, normal_idx)
+            train_and_evaluate_mlp(splits, [256, 64], 0.3, run_name, normal_idx, tracker)
 
-    print(f"\n Best Loss Alpha: {best_alpha} (F1: {best_loss_f1:.4f})\n")
+    elif tune_config.CURRENT_PHASE == 3:
+        bb, alpha = tune_config.BEST_BACKBONE_SO_FAR, tune_config.BEST_ALPHA_SO_FAR
+        ae_path = train_ae(bb, alpha, "MLP_Preload_Winner", train_loader, save_graphs=False)
+        best_splits = extract_features(bb, ae_path, test_loader, normal_idx)
+        best_f1, best_mlp_state = -1, None
+        
+        for arch in tune_config.MLP_ARCHITECTURES:
+            for drop in tune_config.MLP_DROPOUTS:
+                run_name = f"MLP/{'_'.join(map(str, arch))}_drop_{drop}"
+                f1, m_state = train_and_evaluate_mlp(best_splits, arch, drop, run_name, normal_idx, tracker)
+                if f1 > best_f1: best_f1, best_mlp_state = f1, m_state
 
-    # --- STEP 3: TUNE MLP (Using best AE features) ---
-    print("\n STARTING RAPID MLP TUNING")
-    best_splits = extract_features(best_backbone, best_ae_path, test_loader, normal_idx)
-    
-    best_mlp_f1, best_mlp_config = -1, None
-    
-    for arch in config_tune.MLP_ARCHITECTURES:
-        for drop in config_tune.MLP_DROPOUTS:
-            arch_str = "_".join(map(str, arch))
-            run_name = f"step3_mlp_{arch_str}_drop_{drop}"
-            
-            f1 = train_and_evaluate_mlp(best_splits, arch, drop, run_name, normal_idx, tracker)
-            results[run_name] = f1
-            
-            if f1 > best_mlp_f1:
-                best_mlp_f1, best_mlp_config = f1, (arch, drop)
-
-    print("\n" + "="*50)
-    print(" FULL TUNING COMPLETE")
-    print(f"Optimal Backbone: {best_backbone}")
-    print(f"Optimal Loss Alpha: {best_alpha}")
-    print(f"Optimal MLP: {best_mlp_config[0]} | Dropout: {best_mlp_config[1]}")
-    print("="*50)
+        if best_mlp_state:
+            torch.save(best_mlp_state, os.path.join(config.TUNING_DIR, tune_config.EXPERIMENT_NAME, "best_final_mlp.pth"))
