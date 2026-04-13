@@ -9,7 +9,7 @@ class EarlyStopping:
         self.counter = 0
         self.best_loss = None
         self.early_stop = False
-        self.best_model_weights = None  # NEW: Store weights in memory
+        self.best_model_weights = None
 
     def __call__(self, val_loss, model):
         if self.best_loss is None:

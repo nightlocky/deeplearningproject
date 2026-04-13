@@ -9,7 +9,13 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
-from sklearn.metrics import classification_report, confusion_matrix, precision_recall_fscore_support
+from sklearn.metrics import (
+    classification_report, 
+    confusion_matrix, 
+    precision_recall_fscore_support,
+    roc_auc_score,
+    average_precision_score
+)
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 
@@ -20,16 +26,14 @@ except ImportError:
     def tqdm(iterable, **kwargs):
         return iterable
 
-# Ensure the parent directory (src) and its data subdirectory are in the path for local imports
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 project_root = os.path.dirname(parent_dir)
 
 sys.path.append(parent_dir)
 
-# Import custom helpers
 from src.dataLoader.data_loader import get_anomaly_dataloaders
-from helper.visualization_helper import plot_loss, plot_error_distribution, plot_confusion_matrix_custom
+from helper.visualization_helper import plot_loss, plot_error_distribution, plot_confusion_matrix
 from helper.mlflow_helper import MLFlowTracker
 
 # ---------------------------------------------------------
@@ -121,17 +125,13 @@ with tracker as run:
             optimizer.step()
             
             batch_losses.append(loss.item())
-            
-            # Update the progress bar text with the live loss
             loop.set_postfix(loss=loss.item())
             
         avg_loss = np.mean(batch_losses)
         train_losses.append(avg_loss)
         tracker.log_metric("train_loss", avg_loss, step=epoch)
-        # Print final epoch summary to the console so it stays after the progress bar clears
         print(f"Epoch [{epoch+1}/{EPOCHS}] completed. Average Loss: {avg_loss:.6f}")
 
-    # --- Save Model ---
     model_path = "cae_model.pth"
     torch.save(model.state_dict(), model_path)
     tracker.log_artifact(model_path)
@@ -164,7 +164,6 @@ with tracker as run:
                 labels.extend(batch_labels.numpy())
         return np.array(errors), np.array(labels)
 
-    # Note: added description tags to the tqdm calls so you know which dataset it is processing
     train_errors, _ = calculate_reconstruction_errors(train_loader, desc="Train Set Errors")
     all_test_errors, all_test_labels = calculate_reconstruction_errors(raw_test_loader, desc="Test Set Errors")
     
@@ -198,13 +197,27 @@ with tracker as run:
     # ---------------------------------------------------------
     test_preds = (test_errors > best_thresh).astype(int)
 
-    precision, recall, final_f1, _ = precision_recall_fscore_support(test_labels, test_preds, average='binary')
-    tracker.log_metrics({"test_precision": precision, "test_recall": recall, "test_f1": final_f1})
+    precision, recall, final_f1, _ = precision_recall_fscore_support(test_labels, test_preds, average='binary', zero_division=0)
+    
+    cm = confusion_matrix(test_labels, test_preds)
+    tn, fp, fn, tp = cm.ravel()
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+    
+    auc_roc = roc_auc_score(test_labels, test_errors)
+    auc_pr = average_precision_score(test_labels, test_errors)
+
+    tracker.log_metrics({
+        "test_precision": precision, 
+        "test_recall": recall, 
+        "test_f1": final_f1,
+        "test_specificity": specificity,
+        "test_auc_roc": auc_roc,
+        "test_auc_pr": auc_pr
+    })
 
     print("\n" + "="*30)
     print("FINAL PERFORMANCE ON UNSEEN TEST SET")
     target_names = ['Healthy (Normal)', 'Pathology (Anomaly)']
-    cm = confusion_matrix(test_labels, test_preds)
     print(classification_report(test_labels, test_preds, target_names=target_names))
 
     # ---------------------------------------------------------
@@ -215,7 +228,18 @@ with tracker as run:
     loss_path = plot_loss(train_losses, "cae_loss.png", MODEL_NAME)
     tracker.log_artifact(loss_path)
     
-    cm_path = plot_confusion_matrix_custom(cm, target_names, "cae_cm.png", MODEL_NAME)
+    cm_path = plot_confusion_matrix(
+        cm=cm, 
+        target_names=target_names, 
+        precision=precision, 
+        recall=recall, 
+        f1=final_f1,
+        specificity=specificity,
+        auc_roc=auc_roc,
+        auc_pr=auc_pr,
+        save_path="cae_cm.png", 
+        model_name=MODEL_NAME
+    )
     tracker.log_artifact(cm_path)
     
     dist_path = plot_error_distribution(

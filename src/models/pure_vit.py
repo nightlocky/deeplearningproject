@@ -13,17 +13,17 @@ from sklearn.metrics import (
     classification_report, 
     confusion_matrix, 
     precision_recall_fscore_support,
+    roc_auc_score,
+    average_precision_score
 )
 import matplotlib.pyplot as plt
 
-# Ensure the parent directory (src) and its data subdirectory are in the path for local imports
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 project_root = os.path.dirname(parent_dir)
 
 sys.path.append(parent_dir)
 
-# Import custom helpers
 from src.dataLoader.data_loader import get_anomaly_dataloaders
 from helper.visualization_helper import plot_loss, plot_error_distribution, plot_confusion_matrix, plot_anomaly_comparison
 from helper.mlflow_helper import MLFlowTracker
@@ -54,10 +54,9 @@ train_loader, test_loader, normal_idx = get_anomaly_dataloaders(
 # ---------------------------------------------------------
 print(f"Loading ViT-B/16 onto {DEVICE}...")
 vit = models.vit_b_16(weights=models.ViT_B_16_Weights.IMAGENET1K_V1)
-# Remove the classification head to get the raw 768-dim features
 vit.heads = nn.Identity() 
 vit = vit.to(DEVICE)
-vit.eval() # We are not training the ViT, only extracting features
+vit.eval() 
 
 # ---------------------------------------------------------
 # 3. MLflow Tracking & Logic
@@ -72,7 +71,6 @@ with tracker as run:
         "batch_size": BATCH_SIZE
     })
 
-    # --- Step A: Extract Training Features & Find the "Normal Center" ---
     print("\nExtracting Training Features (Normal data only)...")
     train_features = []
     with torch.no_grad():
@@ -89,12 +87,11 @@ with tracker as run:
     train_distances = np.linalg.norm(train_features - normal_center, axis=1)
     
     # Set threshold at the 95th percentile of normal training distances
-    # This means we expect a 5% false positive rate on perfectly normal data
+    # Expect a 5% false positive rate on perfectly normal data
     THRESHOLD = np.percentile(train_distances, 95)
     tracker.log_metric("distance_threshold", THRESHOLD)
     print(f"Normal Center calculated. Anomaly Threshold set to: {THRESHOLD:.4f}")
 
-    # --- Step B: Extract Test Features & Calculate Distances ---
     print("\nEvaluating Test Set...")
     test_distances = []
     test_labels_raw = []
@@ -108,24 +105,30 @@ with tracker as run:
             
     test_distances = np.array(test_distances)
     
-    # --- Step C: Predictions & Evaluation ---
-    # Ground truth: 0 for Normal, 1 for Anomaly
     y_true = [0 if l == normal_idx else 1 for l in test_labels_raw]
-    
-    # Prediction: 1 (Anomaly) if distance > threshold, else 0 (Normal)
     y_pred = [1 if d > THRESHOLD else 0 for d in test_distances]
 
-    precision, recall, f1, _ = precision_recall_fscore_support(y_true, y_pred, average='binary')
+    precision, recall, f1, _ = precision_recall_fscore_support(y_true, y_pred, average='binary', zero_division=0)
+    
+    cm = confusion_matrix(y_true, y_pred)
+    tn, fp, fn, tp = cm.ravel()
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+    
+    auc_roc = roc_auc_score(y_true, test_distances)
+    auc_pr = average_precision_score(y_true, test_distances)
+
     tracker.log_metrics({
         "precision": precision,
         "recall": recall,
-        "f1_score": f1
+        "f1_score": f1,
+        "specificity": specificity,
+        "auc_roc": auc_roc,
+        "auc_pr": auc_pr
     })
 
     print("\n" + "="*30)
     print("FINAL PERFORMANCE (ViT CENTROID DISTANCE)")
     target_names = ['Healthy (Normal)', 'Pathology (Anomaly)']
-    cm = confusion_matrix(y_true, y_pred)
     print(classification_report(y_true, y_pred, target_names=target_names))
 
     # ---------------------------------------------------------
@@ -133,23 +136,23 @@ with tracker as run:
     # ---------------------------------------------------------
     MODEL_NAME = "vit_centroid"
     
-    # 1. Confusion Matrix
     cm_path = plot_confusion_matrix(
         cm=cm, 
         target_names=target_names, 
         precision=precision,
         recall=recall,
         f1=f1,
+        specificity=specificity,
+        auc_roc=auc_roc,
+        auc_pr=auc_pr,
         save_path="vit_centroid_cm.png", 
         model_name=MODEL_NAME
     )
     tracker.log_artifact(cm_path)
     
-    # 2. Distance Distribution
     test_normal_dists = test_distances[np.array(y_true) == 0]
     test_anomaly_dists = test_distances[np.array(y_true) == 1]
     
-    # We pass the distances directly to your error distribution helper
     dist_path = plot_error_distribution(
         train_distances, 
         test_normal_dists, 

@@ -12,13 +12,18 @@ import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 import segmentation_models_pytorch as smp
-from sklearn.metrics import classification_report, confusion_matrix, precision_recall_fscore_support
+from sklearn.metrics import (
+    classification_report, 
+    confusion_matrix, 
+    precision_recall_fscore_support,
+    roc_auc_score,
+    average_precision_score
+)
 from sklearn.model_selection import train_test_split
 from torch.utils.data import TensorDataset, DataLoader
 from tqdm import tqdm
 from torchmetrics.functional import structural_similarity_index_measure as ssim
 
-# Custom Imports
 from src import config
 from src.dataLoader.data_loader import dataloader
 from src.helper.visualization_helper import (
@@ -65,7 +70,6 @@ class ErrorCNN(nn.Module):
         Returns:
             torch.Tensor: Probability scores.
         """
-        # Squeeze only the last dimension to prevent batch collapse
         return self.net(x).squeeze(-1)
     
     def train_step(self, maps, labels, optimizer, criterion):
@@ -170,7 +174,7 @@ with tracker:
         if early_stopping.early_stop: break
 
     # ---------------------------------------------------------
-    # 4. Phase 2: CNN Spatial Thresholding
+    # 4.  CNN Spatial Thresholding
     # ---------------------------------------------------------
     ae_model.load_state_dict(best_model_vram)
     ae_model.eval()
@@ -258,10 +262,28 @@ with tracker:
     # ---------------------------------------------------------
     # 6. Visualization & Reporting
     # ---------------------------------------------------------
-    p, r, f, _ = precision_recall_fscore_support(test_bin, final_preds, average='binary')
+    p, r, f, _ = precision_recall_fscore_support(test_bin, final_preds, average='binary', zero_division=0)
+    
+    cm = confusion_matrix(test_bin, final_preds)
+    tn, fp, fn, tp = cm.ravel()
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+    
+    auc_roc = roc_auc_score(test_bin, t_probs)
+    auc_pr = average_precision_score(test_bin, t_probs)
     
     tracker.log_artifact(plot_loss(train_losses, "loss.png", MODEL_NAME))
-    tracker.log_artifact(plot_confusion_matrix(confusion_matrix(test_bin, final_preds), ['Normal', 'Anomaly'], p, r, f, "cm.png", MODEL_NAME))
+    tracker.log_artifact(plot_confusion_matrix(
+        cm=cm, 
+        target_names=['Normal', 'Anomaly'], 
+        precision=p, 
+        recall=r, 
+        f1=f, 
+        specificity=specificity,
+        auc_roc=auc_roc,
+        auc_pr=auc_pr,
+        save_path="cm.png", 
+        model_name=MODEL_NAME
+    ))
     tracker.log_artifact(plot_error_distribution(
         train_errors=v_probs[val_bin == 0], 
         test_normal_errors=t_probs[test_bin == 0], 
@@ -375,6 +397,14 @@ with tracker:
     tracker.log_artifact(table_path)
 
     # --------------------------------------------------
-    tracker.log_metrics({"f1": float(f), "threshold": float(opt_thresh)})
+    tracker.log_metrics({
+        "f1": float(f), 
+        "precision": float(p),
+        "recall": float(r),
+        "specificity": float(specificity),
+        "auc_roc": float(auc_roc),
+        "auc_pr": float(auc_pr),
+        "threshold": float(opt_thresh)
+    })
     
     print("="*30 + "\nOVERALL REPORT\n" + classification_report(test_bin, final_preds, target_names=['Normal', 'Anomaly']))

@@ -1,9 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import os
-import sys
 import seaborn as sns
-import torch
 
 from src import config
 
@@ -14,7 +12,6 @@ def _prepare_save_path(save_path, model_name=None):
     if not save_path:
         return None
     
-    # Use the universal directory from config
     if model_name:
         target_dir = os.path.join(config.GRAPHS_DIR, model_name)
     else:
@@ -51,7 +48,7 @@ def plot_loss(losses, save_path=None, model_name=None):
     if final_path:
         plt.savefig(final_path)
         
-    plt.close(fig) # MEMORY FIX: Closes the figure to free up RAM
+    plt.close(fig)
     return final_path
 
 def plot_error_distribution(train_errors, test_normal_errors, test_anomaly_errors, threshold, save_path=None, model_name=None):
@@ -90,17 +87,21 @@ def plot_error_distribution(train_errors, test_normal_errors, test_anomaly_error
     if final_path:
         plt.savefig(final_path)
         
-    plt.close() # Memory fix
+    plt.close()
     return final_path
 
-def plot_confusion_matrix(cm, target_names, precision, recall, f1, save_path=None, model_name=None):
+def plot_confusion_matrix(cm, target_names, precision, recall, f1, specificity=None, auc_roc=None, auc_pr=None, save_path=None, model_name=None):
     """Plots a clean confusion matrix using Seaborn and pre-calculated metrics."""
     plt.figure(figsize=(7, 6))
     
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', cbar=False,
                 xticklabels=target_names, yticklabels=target_names)
 
-    plt.title(f"Confusion Matrix\nPrecision: {precision:.3f} | Recall: {recall:.3f} | F1: {f1:.3f}")
+    title_str = f"Confusion Matrix\nPrecision: {precision:.3f} | Recall: {recall:.3f} | F1: {f1:.3f}"
+    if specificity is not None and auc_roc is not None and auc_pr is not None:
+        title_str += f"\nSpecificity: {specificity:.3f} | AUC ROC: {auc_roc:.3f} | AUC PR: {auc_pr:.3f}"
+
+    plt.title(title_str)
     plt.ylabel('True Label')
     plt.xlabel('Predicted Label')
     plt.tight_layout()

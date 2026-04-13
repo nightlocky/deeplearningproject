@@ -11,13 +11,18 @@ import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 import segmentation_models_pytorch as smp
-from sklearn.metrics import classification_report, confusion_matrix, precision_recall_fscore_support
+from sklearn.metrics import (
+    classification_report, 
+    confusion_matrix, 
+    precision_recall_fscore_support,
+    roc_auc_score,
+    average_precision_score
+)
 from sklearn.model_selection import train_test_split
 from torch.utils.data import TensorDataset, DataLoader
 from tqdm import tqdm
 from torchmetrics.functional import structural_similarity_index_measure as ssim
 
-# Custom Imports
 from src import config
 from src.dataLoader.data_loader import dataloader
 from src.helper.visualization_helper import (
@@ -161,7 +166,7 @@ with tracker:
         if early_stopping.early_stop: break
 
     # ---------------------------------------------------------
-    # 4. Phase 2: Latent Feature Extraction
+    # 4. Latent Feature Extraction
     # ---------------------------------------------------------
     ae_model.load_state_dict(best_model_vram)
     ae_model.eval()
@@ -184,12 +189,11 @@ with tracker:
             for images, labels in tqdm(loader, desc="Extracting Features & Maps"):
                 imgs_device = images.to(config.DEVICE)
                 
-                # Extract the deepest latent embedding from the encoder
+                
                 encoder_features = ae_model.encoder(imgs_device)
                 deepest_feature = encoder_features[-1] 
-                latent_vector = pool(deepest_feature).flatten(1) # Shape: [Batch, 512]
+                latent_vector = pool(deepest_feature).flatten(1) 
                 
-                # Get full reconstruction for visualization purposes
                 recon = ae_model(imgs_device)
                 diff = torch.abs(imgs_device - recon)
                 
@@ -204,7 +208,6 @@ with tracker:
     all_latents, all_origs, all_recons, all_maps, all_folder_labels = extract_features_and_maps(test_loader)
     all_binary_labels = np.array([0 if l == normal_idx else 1 for l in all_folder_labels])
 
-    # Ensure all parallel arrays are split correctly
     (val_latents, test_latents, val_maps, test_maps, val_bin, test_bin, val_raw, test_raw, val_origs, test_origs, val_recons, test_recons) = train_test_split(
         all_latents, all_maps, all_binary_labels, all_folder_labels, all_origs, all_recons, test_size=0.5, stratify=all_binary_labels
     )
@@ -219,7 +222,7 @@ with tracker:
     )
 
     print("Training MLP on Latent Embeddings (Imbalanced)...")
-    for _ in range(30): # MLP trains much faster, 30 epochs is safe and quick
+    for _ in range(30):
         for x, l in mlp_loader:
             mlp.train_step(x.to(config.DEVICE), l.to(config.DEVICE), mlp_optimizer, mlp_criterion)
 
@@ -262,10 +265,28 @@ with tracker:
     # ---------------------------------------------------------
     # 6. Visualization & Reporting
     # ---------------------------------------------------------
-    p, r, f, _ = precision_recall_fscore_support(test_bin, final_preds, average='binary')
+    p, r, f, _ = precision_recall_fscore_support(test_bin, final_preds, average='binary', zero_division=0)
+    
+    cm = confusion_matrix(test_bin, final_preds)
+    tn, fp, fn, tp = cm.ravel()
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+    
+    auc_roc = roc_auc_score(test_bin, t_probs)
+    auc_pr = average_precision_score(test_bin, t_probs)
     
     tracker.log_artifact(plot_loss(train_losses, "loss.png", MODEL_NAME))
-    tracker.log_artifact(plot_confusion_matrix(confusion_matrix(test_bin, final_preds), ['Normal', 'Anomaly'], p, r, f, "cm.png", MODEL_NAME))
+    tracker.log_artifact(plot_confusion_matrix(
+        cm=cm, 
+        target_names=['Normal', 'Anomaly'], 
+        precision=p, 
+        recall=r, 
+        f1=f, 
+        specificity=specificity,
+        auc_roc=auc_roc,
+        auc_pr=auc_pr,
+        save_path="cm.png", 
+        model_name=MODEL_NAME
+    ))
     tracker.log_artifact(plot_error_distribution(
         train_errors=v_probs[val_bin == 0], 
         test_normal_errors=t_probs[test_bin == 0], 
@@ -275,7 +296,6 @@ with tracker:
         model_name=MODEL_NAME
     ))
 
-    # --- Sample Visualization Function ---
     def save_sample_visualization(orig, recon, diff, true_bin, pred_bin, score, class_id, save_name):
         """
         Generates and saves visual heatmaps juxtaposing the original and reconstructed images.
@@ -342,7 +362,6 @@ with tracker:
                 f"worst_fn_{rank+1}_class_{int(test_raw[i])}.png"
             ))
 
-    # --- Image of the Table Breakdown ---
     fig, ax = plt.subplots(figsize=(10, 4))
     ax.axis('tight')
     ax.axis('off')
@@ -379,6 +398,14 @@ with tracker:
     tracker.log_artifact(table_path)
 
     # --------------------------------------------------
-    tracker.log_metrics({"f1": float(f), "threshold": float(opt_thresh)})
+    tracker.log_metrics({
+        "f1": float(f), 
+        "precision": float(p),
+        "recall": float(r),
+        "specificity": float(specificity),
+        "auc_roc": float(auc_roc),
+        "auc_pr": float(auc_pr),
+        "threshold": float(opt_thresh)
+    })
     
     print("="*30 + "\nOVERALL REPORT\n" + classification_report(test_bin, final_preds, target_names=['Normal', 'Anomaly']))

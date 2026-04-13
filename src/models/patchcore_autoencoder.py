@@ -12,18 +12,22 @@ import torch.optim as optim
 from torchvision import models
 import torch.nn.functional as F
 import numpy as np
-from sklearn.metrics import classification_report, confusion_matrix, precision_recall_fscore_support
+from sklearn.metrics import (
+    classification_report, 
+    confusion_matrix, 
+    precision_recall_fscore_support, 
+    roc_auc_score, 
+    average_precision_score
+)
 from sklearn.model_selection import train_test_split
 from torch.utils.data import TensorDataset, DataLoader
 from tqdm import tqdm
 from torchmetrics.functional import structural_similarity_index_measure as ssim
 
-# Ensure paths are correct
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
-# Import Config and Helpers
 import config as config
 from src.dataLoader.data_loader import dataloader
 from helper.visualization_helper import plot_loss, plot_error_distribution, plot_confusion_matrix, plot_anomaly_comparison
@@ -234,20 +238,31 @@ with tracker as run:
         if f1 > best_f1:
             best_f1, best_thresh = f1, t
 
-    test_preds = [1 if e > best_thresh else 0 for e in test_errors]
-    precision, recall, f1, _ = precision_recall_fscore_support(test_labels, test_preds, average='binary')
+    test_preds = np.array([1 if e > best_thresh else 0 for e in test_errors])
     
     # ---------------------------------------------------------
-    # 6. Logging & Artifacts
+    # 6. Logging & Artifacts (Standardized Metrics)
     # ---------------------------------------------------------
+    precision, recall, f1, _ = precision_recall_fscore_support(test_labels, test_preds, average='binary', zero_division=0)
+    
+    cm = confusion_matrix(test_labels, test_preds)
+    tn, fp, fn, tp = cm.ravel()
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+    
+    auc_roc = roc_auc_score(test_labels, test_errors)
+    auc_pr = average_precision_score(test_labels, test_errors)
+
     l_p = plot_loss(train_losses, "ae_loss.png", MODEL_NAME)
 
     cm_p = plot_confusion_matrix(
-        cm=confusion_matrix(test_labels, test_preds), 
+        cm=cm, 
         target_names=['Normal', 'Anomaly'], 
         precision=precision, 
         recall=recall, 
         f1=f1,
+        specificity=specificity,
+        auc_roc=auc_roc,
+        auc_pr=auc_pr,
         save_path="ae_cm.png", 
         model_name=MODEL_NAME
     )
@@ -265,7 +280,14 @@ with tracker as run:
     tracker.log_artifact(cm_p)
     tracker.log_artifact(d_p)
     tracker.log_metric("optimal_threshold", best_thresh)
-    tracker.log_metrics({"precision": precision, "recall": recall, "f1": f1})
+    tracker.log_metrics({
+        "precision": precision, 
+        "recall": recall, 
+        "f1": f1,
+        "specificity": specificity,
+        "auc_roc": auc_roc,
+        "auc_pr": auc_pr
+    })
     
     torch.save(ae_model.state_dict(), os.path.join(config.PROJECT_ROOT, "patchcore_ae_model.pth"))
     
@@ -277,13 +299,10 @@ with tracker as run:
     raw_images_tensor = next(iter(DataLoader(test_loader.dataset, batch_size=len(test_loader.dataset))))[0]
     
     with torch.no_grad():
-        # Get reconstructions for the full test set
         recon_features = ae_model(test_features_tensor.to(config.DEVICE))
         
-        # Calculate spatial squared error [B, 1, 28, 28]
         spatial_error = torch.mean((test_features_tensor.to(config.DEVICE) - recon_features)**2, dim=1, keepdim=True)
         
-        # Interpolate error heatmap up to 224x224 to match original pixels
         upscaled_error = F.interpolate(spatial_error, size=(config.IMG_SIZE, config.IMG_SIZE), mode='bilinear')
         test_recons = upscaled_error.cpu().numpy()
     

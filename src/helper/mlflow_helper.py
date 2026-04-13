@@ -16,7 +16,6 @@ class MLFlowTracker:
 
     def start_run(self, run_name=None):
         """Starts a new MLFlow run with a specific name."""
-        # If a run is already active, end it first
         if mlflow.active_run():
             mlflow.end_run()
         self.active_run = mlflow.start_run(run_name=run_name)
@@ -41,7 +40,6 @@ class MLFlowTracker:
         mlflow.pytorch.log_model(model, artifact_path)
 
     def __enter__(self):
-        # Default entry for 'with tracker:' context
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
