@@ -1,3 +1,8 @@
+"""
+Module: vit_autoencoder.py
+Description: Extracts embedded features from a pretrained Vision Transformer (ViT-B/16),
+then trains a fully-connected autoencoder on those embeddings using SSIM.
+"""
 import os
 import sys
 import torch
@@ -18,7 +23,7 @@ sys.path.append(parent_dir)
 
 # Import Config and Helpers
 import config as config
-from dataLoader.dataLoader import dataloader
+from src.dataLoader.data_loader import dataloader
 from helper.visualization_helper import (
     plot_loss, 
     plot_error_distribution, 
@@ -66,6 +71,10 @@ vit = vit.to(config.DEVICE)
 vit.eval() 
 
 class FeatureAutoencoder(nn.Module):
+    """
+    A fully connected autoencoder compressing and reconstructing the 1D feature vectors 
+    extracted by the ViT.
+    """
     def __init__(self):
         super().__init__()
         self.encoder = nn.Sequential(
@@ -78,7 +87,17 @@ class FeatureAutoencoder(nn.Module):
             nn.ReLU(),
             nn.Linear(256, 768)
         )
+        
     def forward(self, x):
+        """
+        Forward pass.
+        
+        Args:
+            x (torch.Tensor): 1D Feature Vector.
+            
+        Returns:
+            torch.Tensor: Reconstructed 1D Feature Vector.
+        """
         return self.decoder(self.encoder(x))
 
 ae_model = FeatureAutoencoder().to(config.DEVICE)
@@ -90,21 +109,31 @@ scaler = torch.amp.GradScaler('cuda')
 # ---------------------------------------------------------
 # 3. Static Feature Extraction
 # ---------------------------------------------------------
-def pre_extract_features(loader, desc):
+def extract_features(loader, desc):
+    """
+    Extracts high-level semantic embeddings from images using the ViT.
+    
+    Args:
+        loader (DataLoader): PyTorch DataLoader.
+        desc (str): Progress bar descriptor.
+        
+    Returns:
+        tuple: (torch.Tensor of features, np.ndarray of labels)
+    """
     features, labels = [], []
     with torch.no_grad():
-        for imgs, lbls in tqdm(loader, desc=desc):
+        for images, batch_labels in tqdm(loader, desc=desc):
             with torch.autocast(device_type='cuda', dtype=torch.float16):
-                feats = vit(imgs.to(config.DEVICE, non_blocking=True))
+                feats = vit(images.to(config.DEVICE, non_blocking=True))
             features.append(feats.float().cpu())
-            labels.extend(lbls.numpy())
+            labels.extend(batch_labels.numpy())
     return torch.cat(features), np.array(labels)
 
 print("\nExtracting ViT features to RAM...")
-train_feats_tensor, _ = pre_extract_features(train_loader, "Extracting Train")
-test_feats_tensor, test_labels_raw = pre_extract_features(test_loader, "Extracting Test")
+train_features_tensor, _ = extract_features(train_loader, "Extracting Train")
+test_features_tensor, test_labels_raw = extract_features(test_loader, "Extracting Test")
 
-ae_train_loader = DataLoader(TensorDataset(train_feats_tensor), batch_size=config.BATCH_SIZE, shuffle=True)
+ae_train_loader = DataLoader(TensorDataset(train_features_tensor), batch_size=config.BATCH_SIZE, shuffle=True)
 
 # ---------------------------------------------------------
 # 4. Training Loop (Pure SSIM Loss)
@@ -120,15 +149,15 @@ with tracker as run:
         ae_model.train()
         batch_losses = []
         for batch in ae_train_loader:
-            feats = batch[0].to(config.DEVICE, non_blocking=True)
+            features = batch[0].to(config.DEVICE, non_blocking=True)
             optimizer.zero_grad(set_to_none=True)
             
             with torch.autocast(device_type='cuda', dtype=torch.float16):
-                recon = ae_model(feats)
+                recon = ae_model(features)
                 # Reshape (B, 768) -> (B, 1, 24, 32) for SSIM
                 recon_2d = torch.clamp(recon.view(-1, 1, 24, 32), 0, 1)
-                feats_2d = torch.clamp(feats.view(-1, 1, 24, 32), 0, 1)
-                ssim_loss = 1 - ssim(recon_2d, feats_2d, data_range=1.0)
+                features_2d = torch.clamp(features.view(-1, 1, 24, 32), 0, 1)
+                ssim_loss = 1 - ssim(recon_2d, features_2d, data_range=1.0)
             
             scaler.scale(ssim_loss).backward()
             scaler.step(optimizer)
@@ -144,12 +173,21 @@ with tracker as run:
     # ---------------------------------------------------------
     ae_model.eval()
     
-    def get_ssim_errors(feature_tensor):
+    def calculate_ssim_errors(feature_tensor):
+        """
+        Calculates SSIM reconstruction errors between ViT embeddings.
+        
+        Args:
+            feature_tensor (torch.Tensor): Extracted ViT embeddings.
+            
+        Returns:
+            np.ndarray: Evaluated SSIM errors per sample.
+        """
         with torch.no_grad():
-            feats = feature_tensor.to(config.DEVICE)
-            recon = ae_model(feats)
+            features = feature_tensor.to(config.DEVICE)
+            recon = ae_model(features)
             r2d = torch.clamp(recon.view(-1, 1, 24, 32), 0, 1)
-            f2d = torch.clamp(feats.view(-1, 1, 24, 32), 0, 1)
+            f2d = torch.clamp(features.view(-1, 1, 24, 32), 0, 1)
             
             sample_errors = []
             for i in range(r2d.shape[0]):
@@ -158,37 +196,37 @@ with tracker as run:
             return np.array(sample_errors)
 
     print("\nCalculating SSIM Errors...")
-    train_errors = get_ssim_errors(train_feats_tensor)
-    all_test_errors = get_ssim_errors(test_feats_tensor)
+    train_errors = calculate_ssim_errors(train_features_tensor)
+    all_test_errors = calculate_ssim_errors(test_features_tensor)
     y_true_all = np.array([0 if l == normal_idx else 1 for l in test_labels_raw])
 
-    val_errs, test_errs, val_lbls, test_lbls = train_test_split(
+    val_errors, test_errors, val_labels, test_labels = train_test_split(
         all_test_errors, y_true_all, test_size=0.5, stratify=y_true_all, random_state=42
     )
 
-    thresholds = np.linspace(val_errs.min(), val_errs.max(), 1000)
+    thresholds = np.linspace(val_errors.min(), val_errors.max(), 1000)
     best_f1, best_thresh = 0, 0
     for t in thresholds:
-        preds = (val_errs > t).astype(int)
-        _, _, f1, _ = precision_recall_fscore_support(val_lbls, preds, average='binary', zero_division=0)
+        preds = (val_errors > t).astype(int)
+        _, _, f1, _ = precision_recall_fscore_support(val_labels, preds, average='binary', zero_division=0)
         if f1 > best_f1:
             best_f1, best_thresh = f1, t
 
-    test_preds = [1 if e > best_thresh else 0 for e in test_errs]
-    precision, recall, f1, _ = precision_recall_fscore_support(test_lbls, test_preds, average='binary')
+    test_preds = [1 if e > best_thresh else 0 for e in test_errors]
+    precision, recall, f1, _ = precision_recall_fscore_support(test_labels, test_preds, average='binary')
     
     # ---------------------------------------------------------
     # 6. Logging & Standard Visuals
     # ---------------------------------------------------------
     l_p = plot_loss(train_losses, "ae_loss.png", MODEL_NAME)
     cm_p = plot_confusion_matrix(
-        cm=confusion_matrix(test_lbls, test_preds), 
+        cm=confusion_matrix(test_labels, test_preds), 
         target_names=['Normal', 'Anomaly'], 
         precision=precision, recall=recall, f1=f1,
         save_path="ae_cm.png", model_name=MODEL_NAME
     )
     d_p = plot_error_distribution(
-        train_errors, test_errs[test_lbls==0], test_errs[test_lbls==1], 
+        train_errors, test_errors[test_labels==0], test_errors[test_labels==1], 
         best_thresh, "ae_dist.png", MODEL_NAME
     )
 
@@ -205,7 +243,7 @@ with tracker as run:
     
     generate_anomaly_analysis(
         model=ae_model,
-        feature_tensor=test_feats_tensor, 
+        feature_tensor=test_features_tensor, 
         raw_images_tensor=raw_imgs,       
         all_errors=all_test_errors,       
         y_true=y_true_all,                
@@ -213,4 +251,4 @@ with tracker as run:
     )
     
     torch.save(ae_model.state_dict(), os.path.join(config.PROJECT_ROOT, "vit_ae_model.pth"))
-    print(classification_report(test_lbls, test_preds, target_names=['Normal', 'Anomaly']))
+    print(classification_report(test_labels, test_preds, target_names=['Normal', 'Anomaly']))

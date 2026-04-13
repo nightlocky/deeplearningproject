@@ -18,3 +18,4 @@ src/helper/__pycache__
 __pycache__
 
 *.pth
+mlruns

@@ -1,7 +1,0 @@
-artifact_location: file:///workspace/mlruns/996355765354104580
-creation_time: 1774965186034
-experiment_id: '996355765354104580'
-last_update_time: 1774965186034
-lifecycle_stage: active
-name: unet_autoencoder_image_withCNN
-workspace: default

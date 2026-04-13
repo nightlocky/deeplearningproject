@@ -1,7 +1,0 @@
-artifact_location: file:///workspace/mlruns/731718592083106264
-creation_time: 1774860495335
-experiment_id: '731718592083106264'
-last_update_time: 1774860495335
-lifecycle_stage: active
-name: PatchCore_Autoencoder
-workspace: default

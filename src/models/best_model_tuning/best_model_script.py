@@ -16,10 +16,10 @@ from torchmetrics.functional import structural_similarity_index_measure as ssim
 # Custom Imports
 from src import config
 from src.models.best_model_tuning import config_tune as tune_config
-from src.dataLoader.dataLoader import dataloader
+from src.dataLoader.data_loader import dataloader
 from src.helper.visualization_helper import plot_loss, plot_confusion_matrix, plot_error_distribution
 from src.helper.mlflow_helper import MLFlowTracker
-from src.helper.EarlyStopping import EarlyStopping 
+from src.helper.early_stopping import EarlyStopping 
 from src.models.best_model_tuning.latent_mlp import LatentMLP
 
 # ---------------------------------------------------------
