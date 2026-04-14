@@ -11,7 +11,7 @@ def dataloader(
     n_test_anomaly_per_class=10,
     img_size=224, 
     batch_size=32,
-    num_workers=2 
+    num_workers=16 
 ):
     """
     Creates DataLoaders for Anomaly Detection.

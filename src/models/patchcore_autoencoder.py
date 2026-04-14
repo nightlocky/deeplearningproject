@@ -39,7 +39,7 @@ from src.helper.visualization_helper import (
 from src.helper.mlflow_helper import MLFlowTracker
 
 MODEL_NAME = "patchcore_ae"
-EPOCHS = 20
+EPOCHS = 30
 RUN_PARAMS = {
     "backbone": "resnet18_layer2_layer3",
     "encoder_params": "[384, 128, 64]",
@@ -121,12 +121,11 @@ if __name__ == "__main__":
         train_path=config.TRAIN_PATH, 
         test_path=config.TEST_PATH, 
         img_size=config.IMG_SIZE,
-        n_train_normal=config.TEST_N_TRAIN_NORMAL, 
-        n_test_normal=config.TEST_N_TEST_NORMAL,
-        n_test_anomaly_per_class=config.TEST_N_TEST_ANOMALY_PER_CLASS, 
+        n_train_normal= config.N_TRAIN_NORMAL, 
+        n_test_normal= config.N_TEST_NORMAL,
+        n_test_anomaly_per_class=config.N_TEST_ANOMALY_PER_CLASS, 
         batch_size=config.BATCH_SIZE
     )
-
     # ---------------------------------------------------------
     # 2. Models: ResNet Backbone & Autoencoder
     # ---------------------------------------------------------
@@ -165,7 +164,6 @@ if __name__ == "__main__":
         
         for epoch in range(EPOCHS):
             ae_model.train()
-            batch_losses = []
             for batch in ae_train_loader:
                 features = batch[0].to(config.DEVICE, non_blocking=True)
                 

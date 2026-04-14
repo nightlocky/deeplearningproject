@@ -53,9 +53,9 @@ if __name__ == "__main__":
         train_path=TRAIN_PATH, 
         test_path=TEST_PATH, 
         img_size=IMG_SIZE,
-        n_train_normal=1000,
-        n_test_normal=300,
-        n_test_anomaly_per_class=50,
+        n_train_normal= config.TEST_N_TRAIN_NORMAL,  # config.N_TRAIN_NORMAL,
+        n_test_normal= config.TEST_N_TEST_NORMAL,  # config.N_TEST_NORMAL,
+        n_test_anomaly_per_class= config.TEST_N_TEST_ANOMALY_PER_CLASS, # config.N_TEST_ANOMALY_PER_CLASS,
         batch_size=BATCH_SIZE,
         num_workers=16
     )
