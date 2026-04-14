@@ -312,6 +312,43 @@ def plot_prediction_sample(raw_image, model_output, score: float, save_path: str
     return final_path
 
 
+def _batched_model_outputs(model, feature_tensor: torch.Tensor, view_mode: str):
+    """
+    Runs model inference in mini-batches to avoid moving the entire feature tensor
+    to the GPU at once during analysis plotting.
+    """
+    outputs = []
+    error_maps = []
+    batch_size = config.BATCH_SIZE
+
+    with torch.no_grad():
+        for start in range(0, feature_tensor.shape[0], batch_size):
+            end = start + batch_size
+            feature_batch = feature_tensor[start:end].to(config.DEVICE, non_blocking=True)
+            output_batch = model(feature_batch)
+
+            if view_mode == FEATURE_OVERLAY_MODE:
+                diff = (feature_batch - output_batch) ** 2
+                if diff.ndim == 2:
+                    spatial_error = diff.view(diff.shape[0], 1, 24, 32)
+                else:
+                    spatial_error = torch.mean(diff, dim=1, keepdim=True)
+
+                heatmap_batch = F.interpolate(
+                    spatial_error,
+                    size=feature_tensor.shape[-2:] if feature_tensor.ndim >= 4 else (config.IMG_SIZE, config.IMG_SIZE),
+                    mode="bilinear",
+                    align_corners=False,
+                )
+                outputs.append(heatmap_batch.cpu())
+                error_maps.append(heatmap_batch.cpu())
+            else:
+                outputs.append(output_batch.cpu())
+                error_maps.append(torch.abs(feature_tensor[start:end] - output_batch.cpu()))
+
+    return torch.cat(outputs), torch.cat(error_maps)
+
+
 def generate_anomaly_analysis(model, feature_tensor, raw_images_tensor, all_errors, y_true, model_name, view_mode: str = None):
     """
     Generates best-hit and worst-miss visualizations with a standardized layout.
@@ -321,32 +358,30 @@ def generate_anomaly_analysis(model, feature_tensor, raw_images_tensor, all_erro
     """
     resolved_mode = resolve_visualization_mode(model_name=model_name, view_mode=view_mode)
 
-    with torch.no_grad():
-        model_inputs = feature_tensor.to(config.DEVICE)
-        model_outputs = model(model_inputs)
+    model_outputs, error_maps = _batched_model_outputs(model, feature_tensor, resolved_mode)
 
-        if resolved_mode == FEATURE_OVERLAY_MODE:
-            diff = (model_inputs - model_outputs) ** 2
-            if diff.ndim == 2:
-                spatial_error = diff.view(diff.shape[0], 1, 24, 32)
-            else:
-                spatial_error = torch.mean(diff, dim=1, keepdim=True)
-
-            heatmaps = F.interpolate(
-                spatial_error,
+    if resolved_mode == FEATURE_OVERLAY_MODE:
+        if list(model_outputs.shape[-2:]) != list(raw_images_tensor.shape[-2:]):
+            model_outputs = F.interpolate(
+                model_outputs,
                 size=raw_images_tensor.shape[-2:],
                 mode="bilinear",
                 align_corners=False,
             )
-            visualization_data = heatmaps.cpu().numpy()
-            error_maps = visualization_data
+            error_maps = F.interpolate(
+                error_maps,
+                size=raw_images_tensor.shape[-2:],
+                mode="bilinear",
+                align_corners=False,
+            )
+        visualization_data = model_outputs.numpy()
+        error_maps = error_maps.numpy()
+    else:
+        visualization_data = model_outputs.numpy()
+        if raw_images_tensor.shape == model_outputs.shape:
+            error_maps = error_maps.numpy()
         else:
-            reconstructions = model_outputs.cpu()
-            visualization_data = reconstructions.numpy()
-            if raw_images_tensor.shape == reconstructions.shape:
-                error_maps = torch.abs(raw_images_tensor - reconstructions).cpu().numpy()
-            else:
-                error_maps = None
+            error_maps = None
 
     raw_images = raw_images_tensor.detach().cpu().numpy()
     all_errors = np.asarray(all_errors)

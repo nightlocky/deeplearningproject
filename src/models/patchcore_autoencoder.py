@@ -164,6 +164,7 @@ if __name__ == "__main__":
         
         for epoch in range(EPOCHS):
             ae_model.train()
+            batch_losses = []
             for batch in ae_train_loader:
                 features = batch[0].to(config.DEVICE, non_blocking=True)
                 
@@ -193,20 +194,22 @@ if __name__ == "__main__":
         # ---------------------------------------------------------
         ae_model.eval()
         
-        def calculate_ssim_errors(feature_tensor):
+        def calculate_ssim_errors(feature_tensor, batch_size=config.BATCH_SIZE):
             """Calculates SSIM-based reconstruction errors for a given feature tensor."""
+            sample_errors = []
             with torch.no_grad():
-                features = feature_tensor.to(config.DEVICE)
-                recon = ae_model(features)
-                
-                r2d = torch.clamp(recon, 0, 1)
-                f2d = torch.clamp(features, 0, 1)
-                
-                sample_errors = []
-                for i in range(r2d.shape[0]):
-                    val = ssim(r2d[i:i+1], f2d[i:i+1], data_range=1.0)
-                    sample_errors.append((1 - val).item())
-                return np.array(sample_errors)
+                feature_loader = DataLoader(TensorDataset(feature_tensor), batch_size=batch_size, shuffle=False)
+                for (feature_batch,) in tqdm(feature_loader, desc="Scoring SSIM", leave=False):
+                    features = feature_batch.to(config.DEVICE, non_blocking=True)
+                    recon = ae_model(features)
+                    
+                    r2d = torch.clamp(recon, 0, 1)
+                    f2d = torch.clamp(features, 0, 1)
+                    
+                    for i in range(r2d.shape[0]):
+                        val = ssim(r2d[i:i+1], f2d[i:i+1], data_range=1.0)
+                        sample_errors.append((1 - val).item())
+            return np.array(sample_errors)
 
         print("\nCalculating SSIM Errors for evaluation...")
         train_errors = calculate_ssim_errors(train_features_tensor)
