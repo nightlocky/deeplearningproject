@@ -95,14 +95,14 @@ class ErrorCNN(nn.Module):
         return loss.item()
 
 # =========================================================
-# EXECUTION BLOCK (Protected for Multiprocessing)
+# EXECUTION BLOCK 
 # =========================================================
 if __name__ == "__main__":
     
     # ---------------------------------------------------------
     # 0. Configuration
     # ---------------------------------------------------------
-    MODEL_NAME = "unet_resnet34_autoencoder"
+    MODEL_NAME = "unet_resnet34_cnn"
     EPOCHS = 50
     RUN_PARAMS = {
         "backbone": "ResNet34",
@@ -147,7 +147,7 @@ if __name__ == "__main__":
     scaler = torch.amp.GradScaler('cuda') 
 
     # ---------------------------------------------------------
-    # 3. Phase 1: Autoencoder Training
+    # 3. Autoencoder Training
     # ---------------------------------------------------------
     tracker = MLFlowTracker(experiment_name="unet_autoencoder_image_withCNN")
     best_model_vram = None
@@ -184,7 +184,7 @@ if __name__ == "__main__":
                 break
 
         # ---------------------------------------------------------
-        # 4. Phase 2: CNN Spatial Thresholding
+        # 4. CNN Spatial Thresholding
         # ---------------------------------------------------------
         ae_model.load_state_dict(best_model_vram)
         ae_model.eval()

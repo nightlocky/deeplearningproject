@@ -39,7 +39,7 @@ from src.helper.visualization_helper import (
 from src.helper.mlflow_helper import MLFlowTracker
 
 MODEL_NAME = "patchcore_ae"
-EPOCHS = 30
+EPOCHS = 25
 RUN_PARAMS = {
     "backbone": "resnet18_layer2_layer3",
     "encoder_params": "[384, 128, 64]",

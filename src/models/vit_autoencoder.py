@@ -106,7 +106,7 @@ def extract_features(loader, vit_model, desc):
     return torch.cat(features), np.array(labels)
 
 # =========================================================
-# EXECUTION BLOCK (Protected for Multiprocessing)
+# EXECUTION BLOCK
 # =========================================================
 if __name__ == "__main__":
     

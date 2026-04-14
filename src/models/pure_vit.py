@@ -32,7 +32,7 @@ from src.helper.mlflow_helper import MLFlowTracker
 # 1. Configuration Constants
 # ---------------------------------------------------------
 # =========================================================
-# EXECUTION BLOCK (Protected for Multiprocessing on RunPod/Windows)
+# EXECUTION BLOCK
 # =========================================================
 if __name__ == "__main__":
     
@@ -40,15 +40,13 @@ if __name__ == "__main__":
     # 2. Data Loading
     # ---------------------------------------------------------
     print("Loading datasets...")
-    # NOTE: Your `dataloader` outputs 1-channel grayscale images. 
-    # ViT expects 3 channels. We will expand the channels inside the feature extraction loops.
     train_loader, test_loader, normal_idx = dataloader(
         train_path=config.TRAIN_PATH, 
         test_path=config.TEST_PATH, 
         img_size=config.IMG_SIZE,
-        n_train_normal=config.N_TRAIN_NORMAL,
-        n_test_normal=config.N_TEST_NORMAL,
-        n_test_anomaly_per_class=config.N_TEST_ANOMALY_PER_CLASS,
+        n_train_normal= config.N_TRAIN_NORMAL,
+        n_test_normal= config.N_TEST_NORMAL,
+        n_test_anomaly_per_class= config.N_TEST_ANOMALY_PER_CLASS,
         batch_size=config.BATCH_SIZE,
         num_workers=config.NUM_WORKERS,
     )

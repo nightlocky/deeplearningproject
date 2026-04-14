@@ -18,7 +18,7 @@ from sklearn.metrics import (
 )
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
-
+from src import config
 try:
     from tqdm import tqdm
 except ImportError:
@@ -84,7 +84,7 @@ class ConvAutoencoder(nn.Module):
         return self.decoder(self.encoder(x))
 
 # =========================================================
-# EXECUTION BLOCK (Protected for Multiprocessing on RunPod/Windows)
+# EXECUTION BLOCK
 # =========================================================
 if __name__ == "__main__":
     
@@ -96,9 +96,9 @@ if __name__ == "__main__":
         train_path=config.TRAIN_PATH, 
         test_path=config.TEST_PATH, 
         img_size=config.IMG_SIZE, 
-        n_train_normal=config.N_TRAIN_NORMAL,
-        n_test_normal=config.N_TEST_NORMAL,
-        n_test_anomaly_per_class=config.N_TEST_ANOMALY_PER_CLASS,
+        n_train_normal= config.N_TRAIN_NORMAL, 
+        n_test_normal=  config.N_TEST_NORMAL,
+        n_test_anomaly_per_class=  config.N_TEST_ANOMALY_PER_CLASS,
         batch_size=config.BATCH_SIZE,
         num_workers=config.NUM_WORKERS,
     )

@@ -142,7 +142,7 @@ if __name__ == "__main__":
     scaler = torch.amp.GradScaler('cuda') 
 
     # ---------------------------------------------------------
-    # 3. Phase 1: Autoencoder Training
+    # 3. Autoencoder Training
     # ---------------------------------------------------------
     tracker = MLFlowTracker(experiment_name="unet_autoencoder_latent_mlp")
     best_model_vram = None
