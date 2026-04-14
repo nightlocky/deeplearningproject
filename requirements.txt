@@ -2,6 +2,9 @@ torch
 torchvision
 numpy
 matplotlib
+seaborn
 scikit-learn
 mlflow
 tqdm
+torchmetrics
+segmentation-models-pytorch
