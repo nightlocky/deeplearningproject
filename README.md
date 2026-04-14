@@ -60,6 +60,8 @@ Saved best-model artifacts and metadata are stored in [src/inference/best_model]
 
 - [best_model_metadata.json](C:/Users/anged/Desktop/deeplearningproject/src/inference/best_model/best_model_metadata.json)
 - [load_best_model.py](C:/Users/anged/Desktop/deeplearningproject/src/inference/best_model/load_best_model.py)
+- `best_final_mlp.pth`
+- `loss_functions_0.5_best_ae.pth`
 
 ## Training and Tuning
 
@@ -120,10 +122,24 @@ These figures are created through [visualization_helper.py](C:/Users/anged/Deskt
 
 The best tuned model can be rebuilt directly from saved weights and metadata.
 
+### What to keep together
+
+Keep these files together inside [src/inference/best_model](C:/Users/anged/Desktop/deeplearningproject/src/inference/best_model):
+
+- `best_final_mlp.pth`
+- `loss_functions_0.5_best_ae.pth`
+- `best_model_metadata.json`
+
 Check that the saved model files load correctly:
 
 ```bash
 python -m src.inference.best_model.load_best_model --metadata src/inference/best_model/best_model_metadata.json --check-only
+```
+
+Predict one image directly:
+
+```bash
+python -m src.inference.best_model.load_best_model --metadata src/inference/best_model/best_model_metadata.json --image path/to/image.jpeg
 ```
 
 This loader rebuilds:
@@ -132,6 +148,8 @@ This loader rebuilds:
 - the latent feature extraction path using `AdaptiveAvgPool2d((1, 1))`
 - the tuned `LatentMLP`
 - the saved threshold-based anomaly decision rule
+
+This means the loader does not retrain the model. It rebuilds the saved architecture, loads the saved weights, applies the stored threshold, and can return a simple `Normal` or `Anomaly` prediction for a new image.
 
 ## Setup
 
