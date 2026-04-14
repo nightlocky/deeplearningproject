@@ -1,10 +1,10 @@
 {
   "model_name": "best_unet_latent_mlp",
   "experiment_name": "best_model_tuning",
-  "description": "Template metadata for loading the best tuned autoencoder + latent MLP pipeline.",
+  "description": "Best tuned U-Net autoencoder plus latent MLP recovered from the winning MLflow run.",
   "artifacts": {
-    "ae_weights_path": "src/models/best_model_tuning/best_model_tuning/loss_functions/0.5/loss_functions_0.5_best_ae.pth",
-    "mlp_weights_path": "REPLACE_WITH_LOCAL_PATH_TO_best_final_mlp.pth"
+    "ae_weights_path": "src/inference/best_model/loss_functions_0.5_best_ae.pth",
+    "mlp_weights_path": "src/inference/best_model/best_final_mlp.pth"
   },
   "architecture": {
     "autoencoder_type": "smp.Unet",
@@ -15,7 +15,7 @@
     "activation": "sigmoid",
     "pooling": "AdaptiveAvgPool2d((1, 1))",
     "latent_dim": 2048,
-    "mlp_hidden_layers": [1024, 512, 256],
+    "mlp_hidden_layers": [256, 64],
     "mlp_dropout": 0.3
   },
   "preprocessing": {
@@ -30,16 +30,16 @@
     "decoder_lr": 0.001,
     "ae_epochs": 30,
     "mlp_epochs": 30,
-    "loss_summary": "UNet autoencoder trained with weighted SSIM + L1 during tuning. MLP trained with BCELoss on latent embeddings.",
+    "loss_summary": "U-Net autoencoder trained with weighted SSIM plus L1 during tuning. MLP trained with BCELoss on latent embeddings.",
     "best_alpha": 0.5
   },
   "inference": {
-    "threshold": "REPLACE_WITH_SELECTED_THRESHOLD",
+    "threshold": 0.3208799362182617,
     "score_type": "mlp_probability",
     "decision_rule": "predict anomaly when score > threshold"
   },
   "notes": [
-    "Copy the RunPod best_final_mlp.pth to a persistent local path and update mlp_weights_path.",
-    "Fill in the final threshold from the winning run before using this metadata for reproducible inference."
+    "Saved model files are colocated with this metadata inside src/inference/best_model.",
+    "This metadata reflects the MLflow-winning configuration: MLP/256_64_drop_0.3."
   ]
 }

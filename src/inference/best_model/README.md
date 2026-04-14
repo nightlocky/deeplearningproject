@@ -13,11 +13,8 @@ Keep these three files together:
 ## Recommended workflow
 
 1. Copy `best_final_mlp.pth` from RunPod into a persistent location in this project.
-2. Duplicate `metadata.template.json` as `best_model_metadata.json`.
-3. Fill in:
-   - `artifacts.mlp_weights_path`
-   - `inference.threshold`
-   - any architecture details that differ from the template
+2. Use `best_model_metadata.json` as the finalized metadata file.
+3. Update it if any artifact paths or winning-run details change.
 4. Load the model with:
 
 ```bash

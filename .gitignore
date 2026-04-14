@@ -18,5 +18,7 @@ src/helper/__pycache__
 __pycache__
 
 *.pth
+!src/inference/best_model/loss_functions_0.5_best_ae.pth
+!src/inference/best_model/best_final_mlp.pth
 mlruns
 .ipynb_checkpoints
