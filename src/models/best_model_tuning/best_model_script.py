@@ -17,7 +17,12 @@ from torchmetrics.functional import structural_similarity_index_measure as ssim
 from src import config
 from src.models.best_model_tuning import config_tune as tune_config
 from src.dataLoader.data_loader import dataloader
-from src.helper.visualization_helper import plot_loss, plot_confusion_matrix, plot_error_distribution
+from src.helper.visualization_helper import (
+    plot_loss,
+    plot_confusion_matrix,
+    plot_error_distribution,
+    plot_prediction_sample,
+)
 from src.helper.mlflow_helper import MLFlowTracker
 from src.helper.early_stopping import EarlyStopping 
 from src.models.best_model_tuning.latent_mlp import LatentMLP
@@ -126,15 +131,18 @@ def train_and_evaluate_mlp(data_splits, hidden_layers, dropout, run_name, normal
 
     # --- Visualization Helper ---
     def save_sample_visualization(orig, recon, diff, true_bin, pred_bin, score, class_id, filename):
-        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-        axes[0].imshow(orig.squeeze().numpy(), cmap='gray'); axes[0].set_title("Original OCT"); axes[0].axis('off')
-        axes[1].imshow(recon.squeeze().numpy(), cmap='gray'); axes[1].set_title("Autoencoder Recon"); axes[1].axis('off')
-        sns.heatmap(diff.squeeze().numpy(), cmap='jet', ax=axes[2], cbar=True); axes[2].set_title(f"Diff Map (Score: {score:.4f})"); axes[2].axis('off')
         status = "Correct" if true_bin == pred_bin else "Incorrect"
-        fig.suptitle(f"Class: {int(class_id)} | True: {true_bin} | Pred: {pred_bin} ({status})", fontsize=14)
-        full_path = os.path.join(samples_dir, filename)
-        plt.tight_layout(); plt.savefig(full_path); plt.close(fig)
-        return full_path
+        title = f"Class: {int(class_id)} | True: {true_bin} | Pred: {pred_bin} ({status})"
+        return plot_prediction_sample(
+            raw_image=orig,
+            model_output=recon,
+            score=score,
+            save_path=os.path.join(run_dir, "samples", filename),
+            model_name=safe_name,
+            view_mode="reconstruction",
+            error_map=diff,
+            title=title,
+        )
 
     # --- MLP Training ---
     mlp = LatentMLP(input_dim=val_lat.shape[1], hidden_layers=hidden_layers, dropout_rate=dropout).to(config.DEVICE)
