@@ -5,6 +5,8 @@ from pathlib import Path
 import segmentation_models_pytorch as smp
 import torch
 import torch.nn as nn
+from PIL import Image
+from torchvision import transforms
 
 from src import config
 from src.models.best_model_tuning.latent_mlp import LatentMLP
@@ -96,10 +98,21 @@ def predict_labels(bundle, images):
     return (predict_scores(bundle, images) > bundle["threshold"]).int()
 
 
+def load_image(image_path, image_size):
+    transform = transforms.Compose([
+        transforms.Resize((image_size, image_size)),
+        transforms.Grayscale(num_output_channels=1),
+        transforms.ToTensor(),
+    ])
+    image = Image.open(image_path).convert("RGB")
+    return transform(image).unsqueeze(0)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Load the tuned best model without retraining.")
     parser.add_argument("--metadata", required=True, help="Path to the best model metadata JSON file.")
     parser.add_argument("--check-only", action="store_true", help="Only verify that the saved artifacts can be loaded.")
+    parser.add_argument("--image", help="Optional path to one image for a simple prediction test.")
     args = parser.parse_args()
 
     bundle = load_best_model(args.metadata)
@@ -111,6 +124,15 @@ def main():
 
     if args.check_only:
         print("Model artifacts loaded successfully.")
+
+    if args.image:
+        image_size = int(metadata["preprocessing"]["image_size"])
+        image_tensor = load_image(args.image, image_size)
+        score = float(predict_scores(bundle, image_tensor).item())
+        label = "Anomaly" if score > bundle["threshold"] else "Normal"
+        print(f"Image: {args.image}")
+        print(f"Score: {score:.6f}")
+        print(f"Prediction: {label}")
 
 
 if __name__ == "__main__":

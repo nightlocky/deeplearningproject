@@ -21,6 +21,12 @@ Keep these three files together:
 python -m src.inference.best_model.load_best_model --metadata src/inference/best_model/best_model_metadata.json --check-only
 ```
 
+To predict one image directly:
+
+```bash
+python -m src.inference.best_model.load_best_model --metadata src/inference/best_model/best_model_metadata.json --image path/to/image.jpeg
+```
+
 ## What the loader rebuilds
 
 - A `segmentation_models_pytorch.Unet` autoencoder
