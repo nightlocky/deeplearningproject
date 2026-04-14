@@ -121,11 +121,11 @@ if __name__ == "__main__":
         train_path=config.TRAIN_PATH, 
         test_path=config.TEST_PATH, 
         img_size=config.IMG_SIZE,
-        n_train_normal= config.TEST_N_TRAIN_NORMAL,  # config.N_TRAIN_NORMAL,
-        n_test_normal= config.TEST_N_TEST_NORMAL,  # config.N_TEST_NORMAL,
-        n_test_anomaly_per_class= config.TEST_N_TEST_ANOMALY_PER_CLASS, # config.N_TEST_ANOMALY_PER_CLASS,
+        n_train_normal=config.N_TRAIN_NORMAL,
+        n_test_normal=config.N_TEST_NORMAL,
+        n_test_anomaly_per_class=config.N_TEST_ANOMALY_PER_CLASS,
         batch_size=config.BATCH_SIZE,
-        num_workers=16
+        num_workers=config.NUM_WORKERS
     )
 
     # ---------------------------------------------------------

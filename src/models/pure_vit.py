@@ -20,10 +20,10 @@ import matplotlib.pyplot as plt
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
-project_root = os.path.dirname(parent_dir)
 
 sys.path.append(parent_dir)
 
+from src import config
 from src.dataLoader.data_loader import dataloader
 from src.helper.visualization_helper import plot_loss, plot_error_distribution, plot_confusion_matrix, plot_anomaly_comparison
 from src.helper.mlflow_helper import MLFlowTracker
@@ -31,13 +31,6 @@ from src.helper.mlflow_helper import MLFlowTracker
 # ---------------------------------------------------------
 # 1. Configuration Constants
 # ---------------------------------------------------------
-TRAIN_PATH = os.path.join(project_root, 'data', 'OCT', 'train')
-TEST_PATH = os.path.join(project_root, 'data', 'OCT', 'test')
-
-IMG_SIZE = 224
-BATCH_SIZE = 32
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 # =========================================================
 # EXECUTION BLOCK (Protected for Multiprocessing on RunPod/Windows)
 # =========================================================
@@ -50,23 +43,23 @@ if __name__ == "__main__":
     # NOTE: Your `dataloader` outputs 1-channel grayscale images. 
     # ViT expects 3 channels. We will expand the channels inside the feature extraction loops.
     train_loader, test_loader, normal_idx = dataloader(
-        train_path=TRAIN_PATH, 
-        test_path=TEST_PATH, 
-        img_size=IMG_SIZE,
-        n_train_normal= config.TEST_N_TRAIN_NORMAL,  # config.N_TRAIN_NORMAL,
-        n_test_normal= config.TEST_N_TEST_NORMAL,  # config.N_TEST_NORMAL,
-        n_test_anomaly_per_class= config.TEST_N_TEST_ANOMALY_PER_CLASS, # config.N_TEST_ANOMALY_PER_CLASS,
-        batch_size=BATCH_SIZE,
-        num_workers=16
+        train_path=config.TRAIN_PATH, 
+        test_path=config.TEST_PATH, 
+        img_size=config.IMG_SIZE,
+        n_train_normal=config.N_TRAIN_NORMAL,
+        n_test_normal=config.N_TEST_NORMAL,
+        n_test_anomaly_per_class=config.N_TEST_ANOMALY_PER_CLASS,
+        batch_size=config.BATCH_SIZE,
+        num_workers=config.NUM_WORKERS,
     )
 
     # ---------------------------------------------------------
     # 3. Model: Vision Transformer (Feature Extractor)
     # ---------------------------------------------------------
-    print(f"Loading ViT-B/16 onto {DEVICE}...")
+    print(f"Loading ViT-B/16 onto {config.DEVICE}...")
     vit = models.vit_b_16(weights=models.ViT_B_16_Weights.IMAGENET1K_V1)
     vit.heads = nn.Identity() 
-    vit = vit.to(DEVICE)
+    vit = vit.to(config.DEVICE)
     vit.eval() 
 
     # ---------------------------------------------------------
@@ -78,8 +71,8 @@ if __name__ == "__main__":
         tracker.log_params({
             "backbone": "vit_b_16_pretrained",
             "strategy": "Centroid_Distance",
-            "img_size": IMG_SIZE,
-            "batch_size": BATCH_SIZE
+            "img_size": config.IMG_SIZE,
+            "batch_size": config.BATCH_SIZE
         })
 
         print("\nExtracting Training Features (Normal data only)...")
@@ -87,7 +80,7 @@ if __name__ == "__main__":
         with torch.no_grad():
             for images, _ in train_loader:
                 # ViT needs 3 channels, grayscale loader returns 1.
-                images_3c = images.repeat(1, 3, 1, 1).to(DEVICE)
+                images_3c = images.repeat(1, 3, 1, 1).to(config.DEVICE)
                 feats = vit(images_3c)
                 train_features.append(feats.cpu().numpy())
         
@@ -111,7 +104,7 @@ if __name__ == "__main__":
         
         with torch.no_grad():
             for images, labels in test_loader:
-                images_3c = images.repeat(1, 3, 1, 1).to(DEVICE)
+                images_3c = images.repeat(1, 3, 1, 1).to(config.DEVICE)
                 feats = vit(images_3c).cpu().numpy()
                 dist = np.linalg.norm(feats - normal_center, axis=1)
                 test_distances.extend(dist)

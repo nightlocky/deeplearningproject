@@ -28,10 +28,10 @@ except ImportError:
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
-project_root = os.path.dirname(parent_dir)
 
 sys.path.append(parent_dir)
 
+from src import config
 from src.dataLoader.data_loader import dataloader
 from src.helper.visualization_helper import (
     plot_loss,
@@ -44,13 +44,7 @@ from src.helper.mlflow_helper import MLFlowTracker
 # ---------------------------------------------------------
 # 1. Configuration Constants
 # ---------------------------------------------------------
-TRAIN_PATH = os.path.join(project_root, 'data', 'OCT', 'train')
-TEST_PATH = os.path.join(project_root, 'data', 'OCT', 'test')
-
-IMG_SIZE = 224
-BATCH_SIZE = 32
 EPOCHS = 20
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # ---------------------------------------------------------
 # 2. Model: Convolutional Autoencoder
@@ -99,16 +93,17 @@ if __name__ == "__main__":
     # ---------------------------------------------------------
     print("Loading datasets...")
     train_loader, raw_test_loader, normal_idx = dataloader(
-        train_path=TRAIN_PATH, 
-        test_path=TEST_PATH, 
-        img_size=IMG_SIZE, 
-        n_train_normal= config.TEST_N_TRAIN_NORMAL,  # config.N_TRAIN_NORMAL,
-        n_test_normal= config.TEST_N_TEST_NORMAL,  # config.N_TEST_NORMAL,
-        n_test_anomaly_per_class= config.TEST_N_TEST_ANOMALY_PER_CLASS, # config.N_TEST_ANOMALY_PER_CLASS,
-        batch_size=BATCH_SIZE
+        train_path=config.TRAIN_PATH, 
+        test_path=config.TEST_PATH, 
+        img_size=config.IMG_SIZE, 
+        n_train_normal=config.N_TRAIN_NORMAL,
+        n_test_normal=config.N_TEST_NORMAL,
+        n_test_anomaly_per_class=config.N_TEST_ANOMALY_PER_CLASS,
+        batch_size=config.BATCH_SIZE,
+        num_workers=config.NUM_WORKERS,
     )
 
-    model = ConvAutoencoder().to(DEVICE)
+    model = ConvAutoencoder().to(config.DEVICE)
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
 
@@ -120,7 +115,7 @@ if __name__ == "__main__":
     with tracker as run:
         tracker.log_params({"model": "ConvAutoencoder", "epochs": EPOCHS, "lr": 1e-3})
 
-        print(f"\nTraining ConvAutoencoder on {DEVICE}...")
+        print(f"\nTraining ConvAutoencoder on {config.DEVICE}...")
         train_losses = []
         
         for epoch in range(EPOCHS):
@@ -131,7 +126,7 @@ if __name__ == "__main__":
             loop = tqdm(train_loader, desc=f"Epoch [{epoch+1}/{EPOCHS}]", leave=False)
             
             for images, _ in loop:
-                images = images.to(DEVICE)
+                images = images.to(config.DEVICE)
                 
                 recon = model(images)
                 loss = criterion(recon, images) 
@@ -173,7 +168,7 @@ if __name__ == "__main__":
             errors, labels = [], []
             with torch.no_grad():
                 for images, batch_labels in tqdm(loader, desc=desc):
-                    images = images.to(DEVICE)
+                    images = images.to(config.DEVICE)
                     recon = model(images)
                     batch_err = torch.mean((images - recon)**2, dim=[1,2,3]).cpu().numpy()
                     errors.extend(batch_err)

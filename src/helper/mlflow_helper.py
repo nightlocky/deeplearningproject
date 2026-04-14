@@ -29,8 +29,18 @@ class MLFlowTracker:
     def log_params(self, params):
         mlflow.log_params(params)
 
-    def log_metrics(self, metrics_dict, step=None):
-        mlflow.log_metrics(metrics_dict, step=step)
+    def log_metrics(self, metrics, value=None, step=None):
+        """
+        Logs metrics in either dictionary form or key/value form.
+        """
+        if isinstance(metrics, dict):
+            mlflow.log_metrics(metrics, step=step)
+            return
+
+        if value is None:
+            raise ValueError("A metric value is required when logging a single metric name.")
+
+        mlflow.log_metric(metrics, value, step=step)
 
     def log_artifact(self, local_path):
         if local_path and os.path.exists(local_path):

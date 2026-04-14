@@ -2,16 +2,17 @@ import os
 import torch
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
+from src import config
 
 def dataloader(
     train_path, 
     test_path, 
-    n_train_normal=5000, 
-    n_test_normal=250, 
-    n_test_anomaly_per_class=10,
-    img_size=224, 
-    batch_size=32,
-    num_workers=16 
+    n_train_normal=config.N_TRAIN_NORMAL, 
+    n_test_normal=config.N_TEST_NORMAL, 
+    n_test_anomaly_per_class=config.N_TEST_ANOMALY_PER_CLASS,
+    img_size=config.IMG_SIZE, 
+    batch_size=config.BATCH_SIZE,
+    num_workers=config.NUM_WORKERS 
 ):
     """
     Creates DataLoaders for Anomaly Detection.

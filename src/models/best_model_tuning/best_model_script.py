@@ -237,7 +237,7 @@ if __name__ == "__main__":
         n_test_normal=config.N_TEST_NORMAL, 
         n_test_anomaly_per_class=config.N_TEST_ANOMALY_PER_CLASS,
         batch_size=config.BATCH_SIZE, 
-        num_workers=16
+        num_workers=config.NUM_WORKERS
     )
     tracker = MLFlowTracker(experiment_name=tune_config.EXPERIMENT_NAME)
 

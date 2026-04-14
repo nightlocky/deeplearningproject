@@ -121,10 +121,11 @@ if __name__ == "__main__":
         train_path=config.TRAIN_PATH, 
         test_path=config.TEST_PATH, 
         img_size=config.IMG_SIZE,
-        n_train_normal= config.N_TRAIN_NORMAL, 
+        n_train_normal=config.N_TRAIN_NORMAL, 
         n_test_normal= config.N_TEST_NORMAL,
         n_test_anomaly_per_class=config.N_TEST_ANOMALY_PER_CLASS, 
-        batch_size=config.BATCH_SIZE
+        batch_size=config.BATCH_SIZE,
+        num_workers=config.NUM_WORKERS
     )
     # ---------------------------------------------------------
     # 2. Models: ResNet Backbone & Autoencoder
