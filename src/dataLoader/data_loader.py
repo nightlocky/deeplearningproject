@@ -32,6 +32,8 @@ def dataloader(
     full_test_ds = datasets.ImageFolder(root=test_path, transform=transform)
     
     normal_idx = full_train_ds.class_to_idx['NORMAL']
+    print(f"Train class_to_idx: {full_train_ds.class_to_idx}")
+    print(f"Test class_to_idx:  {full_test_ds.class_to_idx}")
 
     # 2. Filter Indices (UPDATED FOR STRATIFIED SAMPLING)
     # Get all training normal indices
@@ -54,6 +56,9 @@ def dataloader(
             selected_indices = indices[:n_test_anomaly_per_class]
             test_anom_idx.extend(selected_indices)
             anomaly_count += len(selected_indices)
+
+    print(f"Selected test NORMAL count: {len(test_norm_idx)}")
+    print(f"Selected test ANOMALY count: {len(test_anom_idx)}")
 
     # 3. Create Subsets
     train_subset = Subset(full_train_ds, train_norm_idx[:n_train_normal])
