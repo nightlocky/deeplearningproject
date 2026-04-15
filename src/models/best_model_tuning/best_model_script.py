@@ -1,6 +1,5 @@
 import os
 import gc
-import csv
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -39,13 +38,6 @@ def _make_safe_label(name):
 
 def _save_breakdown_table(rows, save_path, title):
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
-
-    with open(save_path, "w", newline="", encoding="utf-8") as csv_file:
-        writer = csv.writer(csv_file)
-        writer.writerow(["Class", "Class Type", "Correct", "Wrong", "Total", "Accuracy"])
-        writer.writerows(rows)
-
-    png_path = os.path.splitext(save_path)[0] + ".png"
     fig_height = max(3.5, 0.6 * (len(rows) + 2))
     fig, ax = plt.subplots(figsize=(10, fig_height))
     ax.axis("off")
@@ -71,9 +63,9 @@ def _save_breakdown_table(rows, save_path, title):
 
     ax.set_title(title, fontsize=14, pad=16)
     plt.tight_layout()
-    plt.savefig(png_path, dpi=200, bbox_inches="tight")
+    plt.savefig(save_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
-    return save_path, png_path
+    return save_path
 
 
 def _build_prediction_breakdown(test_raw, final_preds, normal_idx, class_names):
@@ -309,12 +301,11 @@ def train_and_evaluate_mlp(data_splits, hidden_layers, dropout, run_name, normal
             tracker.log_artifact(distribution_path)
 
             breakdown_rows = _build_prediction_breakdown(test_raw, final_preds, normal_idx, class_names)
-            breakdown_csv_path, breakdown_png_path = _save_breakdown_table(
+            breakdown_png_path = _save_breakdown_table(
                 breakdown_rows,
-                os.path.join(run_dir, "prediction_breakdown_by_class.csv"),
+                os.path.join(run_dir, "prediction_breakdown_by_class.png"),
                 "Prediction Breakdown by Class",
             )
-            tracker.log_artifact(breakdown_csv_path)
             tracker.log_artifact(breakdown_png_path)
 
             # Misclassification Visualization
