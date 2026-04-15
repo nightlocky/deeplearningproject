@@ -1,5 +1,6 @@
 import os
 import gc
+import csv
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -27,6 +28,81 @@ from src.helper.mlflow_helper import MLFlowTracker
 from src.helper.early_stopping import EarlyStopping 
 from src.models.best_model_tuning.latent_mlp import LatentMLP
 
+
+def _make_safe_name(name):
+    return name.replace("/", "_").replace("\\", "_")
+
+
+def _make_safe_label(name):
+    return "".join(char.lower() if char.isalnum() else "_" for char in name).strip("_")
+
+
+def _save_breakdown_table(rows, save_path, title):
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+    with open(save_path, "w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.writer(csv_file)
+        writer.writerow(["Class", "Class Type", "Correct", "Wrong", "Total", "Accuracy"])
+        writer.writerows(rows)
+
+    png_path = os.path.splitext(save_path)[0] + ".png"
+    fig_height = max(3.5, 0.6 * (len(rows) + 2))
+    fig, ax = plt.subplots(figsize=(10, fig_height))
+    ax.axis("off")
+
+    table = ax.table(
+        cellText=rows,
+        colLabels=["Class", "Class Type", "Correct", "Wrong", "Total", "Accuracy"],
+        loc="center",
+        cellLoc="center",
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(10)
+    table.scale(1, 1.4)
+
+    for (row_idx, col_idx), cell in table.get_celld().items():
+        if row_idx == 0:
+            cell.set_text_props(weight="bold", color="white")
+            cell.set_facecolor("#2f5d8a")
+        elif rows[row_idx - 1][1] == "Aggregate":
+            cell.set_facecolor("#e8f1fb")
+        else:
+            cell.set_facecolor("#f8fbff" if row_idx % 2 == 0 else "#eef5fb")
+
+    ax.set_title(title, fontsize=14, pad=16)
+    plt.tight_layout()
+    plt.savefig(png_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    return save_path, png_path
+
+
+def _build_prediction_breakdown(test_raw, final_preds, normal_idx, class_names):
+    rows = []
+
+    def add_row(class_name, class_type, actual_mask, expected_label):
+        total = int(np.sum(actual_mask))
+        if total == 0:
+            correct = 0
+        else:
+            correct = int(np.sum(final_preds[actual_mask] == expected_label))
+        wrong = total - correct
+        accuracy = f"{(correct / total):.3f}" if total else "0.000"
+        rows.append([class_name, class_type, correct, wrong, total, accuracy])
+
+    normal_mask = test_raw == normal_idx
+    anomaly_mask = test_raw != normal_idx
+
+    add_row(class_names[normal_idx], "Aggregate", normal_mask, expected_label=0)
+    add_row("ANOMALY", "Aggregate", anomaly_mask, expected_label=1)
+
+    for class_id, class_name in enumerate(class_names):
+        if class_id == normal_idx:
+            continue
+        add_row(class_name, "Disease", test_raw == class_id, expected_label=1)
+
+    return rows
+
+
 # ---------------------------------------------------------
 # 1. Phase 1: Train Autoencoder
 # ---------------------------------------------------------
@@ -35,7 +111,7 @@ def train_ae(backbone, loss_alpha, run_name, train_loader, save_graphs=True):
     run_dir = os.path.join(config.TUNING_DIR, tune_config.EXPERIMENT_NAME, run_name)
     os.makedirs(run_dir, exist_ok=True)
     
-    safe_name = run_name.replace("/", "_").replace("\\", "_")
+    safe_name = _make_safe_name(run_name)
     model_save_path = os.path.join(run_dir, f"{safe_name}_best_ae.pth")
 
     ae_model = smp.Unet(
@@ -82,7 +158,7 @@ def train_ae(backbone, loss_alpha, run_name, train_loader, save_graphs=True):
     early_stopping.save_checkpoint() 
 
     if save_graphs:
-        plot_loss(train_losses, os.path.join(run_dir, "loss.png"), safe_name)
+        plot_loss(train_losses, os.path.join(run_dir, "ae_training_loss_curve.png"), safe_name)
         
     del ae_model, optimizer
     torch.cuda.empty_cache()
@@ -119,20 +195,23 @@ def extract_features(backbone, model_path, test_loader, normal_idx):
 # ---------------------------------------------------------
 # 3. Phase 3: Train & Evaluate MLP
 # ---------------------------------------------------------
-def train_and_evaluate_mlp(data_splits, hidden_layers, dropout, run_name, normal_idx, tracker, save_graphs=True):
+def train_and_evaluate_mlp(data_splits, hidden_layers, dropout, run_name, normal_idx, tracker, class_names, save_graphs=True):
     print(f"\n--- Evaluating MLP: {run_name} ---")
     (val_lat, test_lat, val_maps, test_maps, val_bin, test_bin, val_raw, test_raw, val_orig, test_orig, val_recon, test_recon) = data_splits
     
     run_dir = os.path.join(config.TUNING_DIR, tune_config.EXPERIMENT_NAME, run_name)
     os.makedirs(run_dir, exist_ok=True)
-    safe_name = run_name.replace("/", "_")
+    safe_name = _make_safe_name(run_name)
     samples_dir = os.path.join(run_dir, "samples")
     os.makedirs(samples_dir, exist_ok=True)
 
     # --- Visualization Helper ---
     def save_sample_visualization(orig, recon, diff, true_bin, pred_bin, score, class_id, filename):
         status = "Correct" if true_bin == pred_bin else "Incorrect"
-        title = f"Class: {int(class_id)} | True: {true_bin} | Pred: {pred_bin} ({status})"
+        class_name = class_names[int(class_id)]
+        true_name = "Anomaly" if true_bin == 1 else "Normal"
+        pred_name = "Anomaly" if pred_bin == 1 else "Normal"
+        title = f"Class: {class_name} | True: {true_name} | Pred: {pred_name} ({status})"
         return plot_prediction_sample(
             raw_image=orig,
             model_output=recon,
@@ -204,10 +283,41 @@ def train_and_evaluate_mlp(data_splits, hidden_layers, dropout, run_name, normal
         })
 
         if save_graphs:
-            tracker.log_artifact(plot_confusion_matrix(confusion_matrix(test_bin, final_preds), ['Normal', 'Anomaly'], precision, recall, f1, os.path.join(run_dir, "cm.png"), safe_name))
-            tracker.log_artifact(plot_error_distribution(v_probs[val_bin == 0], t_probs[test_bin == 0], t_probs[test_bin == 1], opt_thresh, os.path.join(run_dir, "mlp_dist.png"), safe_name))
-            
-            # Malfunction Visualization
+            cm = confusion_matrix(test_bin, final_preds)
+            cm_path = plot_confusion_matrix(
+                cm,
+                ["Normal", "Anomaly"],
+                precision,
+                recall,
+                f1,
+                specificity=specificity,
+                auc_roc=auc_roc,
+                auc_pr=auc_pr,
+                save_path=os.path.join(run_dir, "test_confusion_matrix.png"),
+                model_name=safe_name,
+            )
+            tracker.log_artifact(cm_path)
+
+            distribution_path = plot_error_distribution(
+                v_probs[val_bin == 0],
+                t_probs[test_bin == 0],
+                t_probs[test_bin == 1],
+                opt_thresh,
+                os.path.join(run_dir, "test_anomaly_score_distribution.png"),
+                safe_name,
+            )
+            tracker.log_artifact(distribution_path)
+
+            breakdown_rows = _build_prediction_breakdown(test_raw, final_preds, normal_idx, class_names)
+            breakdown_csv_path, breakdown_png_path = _save_breakdown_table(
+                breakdown_rows,
+                os.path.join(run_dir, "prediction_breakdown_by_class.csv"),
+                "Prediction Breakdown by Class",
+            )
+            tracker.log_artifact(breakdown_csv_path)
+            tracker.log_artifact(breakdown_png_path)
+
+            # Misclassification Visualization
             idx_fn = np.where((test_bin == 1) & (final_preds == 0))[0] 
             if len(idx_fn) > 0:
                 worst_fn_indices = idx_fn[np.argsort(t_probs[idx_fn])][:5]
@@ -215,7 +325,23 @@ def train_and_evaluate_mlp(data_splits, hidden_layers, dropout, run_name, normal
                     img_path = save_sample_visualization(
                         test_orig[i], test_recon[i], test_maps[i], 
                         test_bin[i], final_preds[i], t_probs[i], test_raw[i], 
-                        f"malfunction_FN_rank{rank+1}_class{int(test_raw[i])}.png"
+                        f"false_negative_{_make_safe_label(class_names[int(test_raw[i])])}_{rank+1}.png"
+                    )
+                    tracker.log_artifact(img_path)
+
+            idx_fp = np.where((test_bin == 0) & (final_preds == 1))[0]
+            if len(idx_fp) > 0:
+                worst_fp_indices = idx_fp[np.argsort(t_probs[idx_fp])[::-1]][:5]
+                for rank, i in enumerate(worst_fp_indices):
+                    img_path = save_sample_visualization(
+                        test_orig[i],
+                        test_recon[i],
+                        test_maps[i],
+                        test_bin[i],
+                        final_preds[i],
+                        t_probs[i],
+                        test_raw[i],
+                        f"false_positive_{_make_safe_label(class_names[int(test_raw[i])])}_{rank+1}.png",
                     )
                     tracker.log_artifact(img_path)
     finally:
@@ -239,6 +365,7 @@ if __name__ == "__main__":
         batch_size=config.BATCH_SIZE, 
         num_workers=config.NUM_WORKERS
     )
+    class_names = list(test_loader.dataset.dataset.classes)
     tracker = MLFlowTracker(experiment_name=tune_config.EXPERIMENT_NAME)
 
     if tune_config.CURRENT_PHASE == 1:
@@ -254,7 +381,8 @@ if __name__ == "__main__":
                     tune_config.DEFAULT_MLP_DROPOUT, 
                     run_name, 
                     normal_idx, 
-                    tracker
+                    tracker,
+                    class_names,
                 )
 
     elif tune_config.CURRENT_PHASE == 2:
@@ -271,7 +399,8 @@ if __name__ == "__main__":
                 tune_config.DEFAULT_MLP_DROPOUT, 
                 run_name, 
                 normal_idx, 
-                tracker
+                tracker,
+                class_names,
             )
 
     elif tune_config.CURRENT_PHASE == 3:
@@ -286,7 +415,15 @@ if __name__ == "__main__":
         for arch in tune_config.MLP_ARCHITECTURES:
             for drop in tune_config.MLP_DROPOUTS:
                 run_name = f"MLP/{'_'.join(map(str, arch))}_drop_{drop}"
-                f1, m_state = train_and_evaluate_mlp(best_splits, arch, drop, run_name, normal_idx, tracker)
+                f1, m_state = train_and_evaluate_mlp(
+                    best_splits,
+                    arch,
+                    drop,
+                    run_name,
+                    normal_idx,
+                    tracker,
+                    class_names,
+                )
                 
                 if f1 > best_f1: 
                     best_f1, best_mlp_state = f1, m_state

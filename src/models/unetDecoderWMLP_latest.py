@@ -10,25 +10,28 @@ from sklearn.metrics import classification_report, confusion_matrix, precision_r
 from sklearn.model_selection import train_test_split
 from torch.utils.data import TensorDataset, DataLoader
 from tqdm import tqdm
-from torchmetrics.image import structural_similarity_index_measure as ssim
+from torchmetrics.functional import structural_similarity_index_measure as ssim
+
 
 # Custom Imports
 from src import config
-from src.dataLoader.dataLoader import dataloader
+from src.dataLoader.data_loader import dataloader
+
 from src.helper.visualization_helper import (
     plot_loss,
     plot_confusion_matrix,
     plot_error_distribution
 )
 from src.helper.mlflow_helper import MLFlowTracker
-from src.helper.EarlyStopping import EarlyStopping 
+from src.helper.early_stopping import EarlyStopping
+
 from sklearn.metrics import roc_auc_score, average_precision_score
 
 
 # ---------------------------------------------------------
 # 0. Configuration & MLP Definition
 # ---------------------------------------------------------
-MODEL_NAME = "unet_resnet34_latent_mlp"
+MODEL_NAME = "unet_resnet34_latent_mlp_stavya"
 EPOCHS = 50
 RUN_PARAMS = {
     "backbone": "ResNet34",
@@ -75,9 +78,9 @@ train_loader, test_loader, normal_idx = dataloader(
     train_path=config.TRAIN_PATH, 
     test_path=config.TEST_PATH, 
     img_size=config.IMG_SIZE,
-    n_train_normal=config.N_TRAIN_NORMAL, 
+    n_train_normal= config.N_TRAIN_NORMAL, 
     n_test_normal=config.N_TEST_NORMAL, 
-    n_test_anomaly=config.N_TEST_ANOMALY,   
+    n_test_anomaly_per_class=config.N_TEST_ANOMALY_PER_CLASS,   
     batch_size=config.BATCH_SIZE,
     num_workers=config.NUM_WORKERS
 )
@@ -318,8 +321,23 @@ with tracker:
     print(f"Precision-Constrained → P:{p:.3f}, R:{r:.3f}, F1:{f:.3f}, thresh:{pc_thresh:.4f}")
     print(f"Percentile (95)      → P:{perc_p:.3f}, R:{perc_r:.3f}, F1:{perc_f:.3f}, thresh:{perc_thresh:.4f}")
     
+    cm = confusion_matrix(test_bin, final_preds)
+    tn, fp, fn, tp = cm.ravel()
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+
     tracker.log_artifact(plot_loss(train_losses, "loss.png", MODEL_NAME))
-    tracker.log_artifact(plot_confusion_matrix(confusion_matrix(test_bin, final_preds), ['Normal', 'Anomaly'], p, r, f, "cm.png", MODEL_NAME))
+    tracker.log_artifact(plot_confusion_matrix(
+        cm=cm,
+        target_names=['Normal', 'Anomaly'],
+        precision=p,
+        recall=r,
+        f1=f,
+        specificity=specificity,
+        auc_roc=roc_auc,
+        auc_pr=pr_auc,
+        save_path="cm.png",
+        model_name=MODEL_NAME
+    ))
     tracker.log_artifact(plot_error_distribution(
         train_errors=v_combined[val_bin == 0], 
         test_normal_errors=t_combined[test_bin == 0], 
