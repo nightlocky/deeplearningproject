@@ -10,7 +10,7 @@ CURRENT_PHASE = 3
 # Update these as you finish each phase
 BEST_BACKBONE_SO_FAR = "resnet50"
 BEST_ALPHA_SO_FAR = 0.5
-BEST_AE_WEIGHTS_PATH = "src/models/best_model_tuning/best_model_tuning/loss_functions/0.5/loss_functions_0.5_best_ae.pth"
+BEST_AE_WEIGHTS_PATH = "src/inference/best_model/loss_functions_0.5_best_ae.pth"
 
 # --- DEFAULTS FOR PRELIMINARY PHASES (Phases 1 & 2) ---
 DEFAULT_MLP_ARCH = [256, 64]
