@@ -95,6 +95,14 @@ def _build_prediction_breakdown(test_raw, final_preds, normal_idx, class_names):
     return rows
 
 
+def _set_random_seed(seed):
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+
 # ---------------------------------------------------------
 # 1. Phase 1: Train Autoencoder
 # ---------------------------------------------------------
@@ -182,7 +190,17 @@ def extract_features(backbone, model_path, test_loader, normal_idx):
     all_binary_labels = np.array([0 if l == normal_idx else 1 for l in folder_ids])
 
     del ae_model; torch.cuda.empty_cache()
-    return train_test_split(all_latents, torch.cat(maps), all_binary_labels, np.array(folder_ids), torch.cat(origs), torch.cat(recons), test_size=0.5, stratify=all_binary_labels)
+    return train_test_split(
+        all_latents,
+        torch.cat(maps),
+        all_binary_labels,
+        np.array(folder_ids),
+        torch.cat(origs),
+        torch.cat(recons),
+        test_size=0.5,
+        stratify=all_binary_labels,
+        random_state=tune_config.RANDOM_SEED,
+    )
 
 # ---------------------------------------------------------
 # 3. Phase 3: Train & Evaluate MLP
@@ -346,6 +364,7 @@ def train_and_evaluate_mlp(data_splits, hidden_layers, dropout, run_name, normal
 # Main Control Loop
 # ---------------------------------------------------------
 if __name__ == "__main__":
+    _set_random_seed(tune_config.RANDOM_SEED)
     train_loader, test_loader, normal_idx = dataloader(
         train_path=config.TRAIN_PATH,
         test_path=config.TEST_PATH,
