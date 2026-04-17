@@ -10,10 +10,41 @@ The main goal is to distinguish normal OCT scans from pathological scans by lear
 
 The project uses OCT images with one normal class and multiple anomaly classes.
 
-| Split | Normal | DRUSEN |    DME |    CNV |
-| ----- | -----: | -----: | -----: | -----: |
-| Train | 51,140 |  8,616 | 11,348 | 37,205 |
-| Test  |    250 |    250 |    250 |    250 |
+The experiments are based on the public OCT2017 retinal dataset, but the repository uses a modified version of the original split. In particular, the last `9750` normal images from the original training split were moved into the test-side normal pool so that the final evaluation uses a larger held-out set of normal scans.
+
+| Split      |   Normal | DRUSEN | DME | CNV |
+| ---------- | -------: | -----: | --: | --: |
+| Train      | 40, 000 |      0 |   0 |   0 |
+| Test       |    5,000 |     75 |  75 |  75 |
+| Validation |    5,000 |     75 |  75 |  75 |
+
+The dataset is not included in this repository due to storage restrictions. Before running the code, place the OCT dataset under the paths expected by [src/config.py](C:/Users/anged/Desktop/deeplearningproject/src/config.py):
+
+```text
+/workspace/data/train
+/workspace/data/test
+```
+
+The training split should contain only normal images for the anomaly-detection training pipeline, while the test split should contain normal and anomalous scans from `CNV`, `DME`, and `DRUSEN`.
+
+### Recreating the Dataset Split Used in This Project
+
+1. Download the original OCT2017 dataset from its public source.
+2. Keep the anomaly classes `CNV`, `DME`, and `DRUSEN` in the test-side pool.
+3. In the original `train/NORMAL` folder, move the last `9750` normal images into the test-side normal pool.
+4. Keep the remaining normal images in the training folder. The code will then sample `40000` training-normal images from this remaining pool during training.
+5. Place the resulting folders under:
+
+```text
+/workspace/data/train
+/workspace/data/test
+```
+
+The code then samples the working split used in this project as:
+
+- training: `40000` normal images
+- validation: `5000` normal + `75` each of `CNV`, `DME`, and `DRUSEN`
+- test: `5000` normal + `75` each of `CNV`, `DME`, and `DRUSEN`
 
 ### Preprocessing
 
@@ -34,7 +65,6 @@ The shared runtime settings live in [src/config.py](C:/Users/anged/Desktop/deepl
 - [src/models/best_model_tuning](C:/Users/anged/Desktop/deeplearningproject/src/models/best_model_tuning): phased tuning pipeline for the final best model
 - [src/inference/best_model](C:/Users/anged/Desktop/deeplearningproject/src/inference/best_model): reproducible loading files for the saved best model
 - [graphs](C:/Users/anged/Desktop/deeplearningproject/graphs): generated figures and analysis plots
-- [mlruns](C:/Users/anged/Desktop/deeplearningproject/mlruns): MLflow tracking outputs
 
 ## Models Implemented
 
@@ -52,9 +82,8 @@ The current best tuned configuration comes from the phased tuning pipeline:
 - autoencoder backbone: `resnet50`
 - tuning loss alpha: `0.5`
 - latent dimension: `2048`
-- MLP hidden layers: `[256, 64]`
-- MLP dropout: `0.3`
-- decision threshold: `0.3208799362182617`
+- MLP hidden layers: `[512, 256, 128, 64]`
+- MLP dropout: `0.1`
 
 Saved best-model artifacts and metadata are stored in [src/inference/best_model](C:/Users/anged/Desktop/deeplearningproject/src/inference/best_model):
 
@@ -94,6 +123,40 @@ Run:
 python -m src.models.best_model_tuning.best_model_script
 ```
 
+## Training the Final Model From Scratch
+
+To retrain the final best model from scratch, first review the tuning settings in [config_tune.py](C:/Users/anged/Desktop/deeplearningproject/src/models/best_model_tuning/config_tune.py). The main fields are:
+
+- `CURRENT_PHASE`: selects which stage of the tuning pipeline to run
+- `BACKBONES`: candidate encoder backbones evaluated in Phase 1
+- `LOSS_ALPHAS`: candidate reconstruction-loss weightings evaluated in Phase 2
+- `MLP_ARCHITECTURES`: candidate latent MLP hidden-layer settings evaluated in Phase 3
+- `MLP_DROPOUTS`: candidate dropout values evaluated in Phase 3
+- `BEST_BACKBONE_SO_FAR`: best backbone carried from Phase 1 into Phase 2
+- `BEST_AE_WEIGHTS_PATH`: best autoencoder checkpoint carried from Phase 2 into Phase 3
+- `RANDOM_SEED`: reproducibility setting for the tuning script
+
+The final best-performing configuration from this tuning process was:
+
+- encoder backbone: `resnet50`
+- reconstruction loss weighting: `0.5`
+- encoder output latent dimension: `2048`
+- MLP hidden layers: `[512, 256, 128, 64]`
+- MLP dropout: `0.1`
+- random seed: `42`
+
+The training workflow is phase-based:
+
+1. Set `CURRENT_PHASE = 1` to test candidate U-Net backbones.
+2. Set `CURRENT_PHASE = 2` after updating `BEST_BACKBONE_SO_FAR` to test reconstruction-loss weightings.
+3. Set `CURRENT_PHASE = 3` after updating `BEST_AE_WEIGHTS_PATH` to test MLP architectures and dropout values.
+
+Run the same command for each phase:
+
+```bash
+python -m src.models.best_model_tuning.best_model_script
+```
+
 ## Evaluation and Visualizations
 
 The project reports the following evaluation metrics across the anomaly detection pipelines:
@@ -105,7 +168,6 @@ The project reports the following evaluation metrics across the anomaly detectio
 - AUC-ROC
 - AUC-PR
 - confusion matrix
-- threshold-based anomaly score distributions
 
 Generated visual outputs include:
 
@@ -122,9 +184,7 @@ These figures are created through [visualization_helper.py](C:/Users/anged/Deskt
 
 The best tuned model can be rebuilt directly from saved weights and metadata.
 
-### What to keep together
-
-Keep these files together inside [src/inference/best_model](C:/Users/anged/Desktop/deeplearningproject/src/inference/best_model):
+Keep these files inside [src/inference/best_model](C:/Users/anged/Desktop/deeplearningproject/src/inference/best_model):
 
 - `best_final_mlp.pth`
 - `loss_functions_0.5_best_ae.pth`
@@ -142,14 +202,20 @@ Predict one image directly:
 python -m src.inference.best_model.load_best_model --metadata src/inference/best_model/best_model_metadata.json --image path/to/image.jpeg
 ```
 
-This loader rebuilds:
+This loader reproduces the saved architecture exactly by rebuilding:
 
-- the `segmentation_models_pytorch.Unet` autoencoder
-- the latent feature extraction path using `AdaptiveAvgPool2d((1, 1))`
-- the tuned `LatentMLP`
-- the saved threshold-based anomaly decision rule
+- the `resnet50` U-Net autoencoder
+- the latent-space MLP with hidden layers `[512, 256, 128, 64]`
+- the saved anomaly threshold from [best_model_metadata.json](C:/Users/anged/Desktop/deeplearningproject/src/inference/best_model/best_model_metadata.json)
 
-This means the loader does not retrain the model. It rebuilds the saved architecture, loads the saved weights, applies the stored threshold, and can return a simple `Normal` or `Anomaly` prediction for a new image.
+To reproduce the reported final performance results shown in the PDF report, load the saved weights above and evaluate them on the same dataset split described in [src/config.py](C:/Users/anged/Desktop/deeplearningproject/src/config.py) and [src/dataLoader/data_loader.py](C:/Users/anged/Desktop/deeplearningproject/src/dataLoader/data_loader.py). The reported figures in the repository were generated from the same best-model tuning pipeline and include:
+
+- `test_confusion_matrix.png`
+- `test_anomaly_score_distribution.png`
+- `prediction_breakdown_by_class.png`
+- false negative sample visualizations under `samples/`
+
+If the large `.pth` files cannot be hosted directly on GitHub, store them externally and place them back into [src/inference/best_model](C:/Users/anged/Desktop/deeplearningproject/src/inference/best_model) before running the commands above.
 
 ## Setup
 
@@ -158,8 +224,3 @@ Install dependencies with:
 ```bash
 pip install -r requirements.txt
 ```
-
-Recommended environment:
-
-- Python 3.11
-- CUDA-enabled PyTorch environment for training speed

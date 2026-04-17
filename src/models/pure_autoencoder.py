@@ -110,7 +110,7 @@ if __name__ == "__main__":
     # ---------------------------------------------------------
     # 4. MLflow Tracking & Training Loop
     # ---------------------------------------------------------
-    tracker = MLFlowTracker(experiment_name="CAE_From_Scratch")
+    tracker = MLFlowTracker(experiment_name="vanilla_cae")
 
     with tracker as run:
         tracker.log_params({"model": "ConvAutoencoder", "epochs": EPOCHS, "lr": 1e-3})

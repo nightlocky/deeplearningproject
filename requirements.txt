@@ -8,3 +8,4 @@ mlflow
 tqdm
 torchmetrics
 segmentation-models-pytorch
+Pillow
