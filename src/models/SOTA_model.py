@@ -1,8 +1,12 @@
 """
-Optimized PatchCore SOTA baseline
-- Batched KNN (no Python loop)
-- Faster scoring
-- Same outputs (CM, ROC, PR, heatmaps)
+ULTRA FAST PatchCore (tqdm everywhere, <5 mins)
+
+Key optimizations:
+- Memory bank = 1%
+- Feature downsampling
+- PCA compression
+- Chunked KNN (with tqdm)
+- tqdm for ALL stages
 """
 
 import os
@@ -11,10 +15,12 @@ import torch
 import numpy as np
 import torch.nn.functional as F
 import cv2
+import time
 
 from torchvision import models
 from tqdm import tqdm
 from sklearn.neighbors import NearestNeighbors
+from sklearn.decomposition import PCA
 from sklearn.metrics import (
     classification_report,
     confusion_matrix,
@@ -35,7 +41,7 @@ from src.helper.visualization_helper import (
     plot_confusion_matrix,
 )
 
-MODEL_NAME = "patchcore_fast"
+MODEL_NAME = "patchcore_ultrafast"
 
 # ------------------------------
 # Feature hooks
@@ -48,13 +54,13 @@ def hook(name):
     return fn
 
 # ------------------------------
-# Feature extraction (GPU)
+# Feature extraction
 # ------------------------------
 def extract_features(loader, model):
     all_feats, all_labels, all_imgs = [], [], []
 
     with torch.no_grad():
-        for imgs, labels in tqdm(loader, desc="Extracting"):
+        for imgs, labels in tqdm(loader, desc="Extracting features"):
             imgs = imgs.to(config.DEVICE)
             imgs3 = imgs.repeat(1, 3, 1, 1)
 
@@ -65,142 +71,134 @@ def extract_features(loader, model):
 
             f2 = F.interpolate(f2, size=f3.shape[2:], mode="bilinear")
             f = torch.cat([f2, f3], dim=1)
-            f = F.avg_pool2d(f, 3, 1, 1)
 
-            all_feats.append(f.cpu())  # keep CPU to save VRAM
+            # 🔥 MASSIVE SPEED BOOST
+            f = F.avg_pool2d(f, 4, 4)
+
+            all_feats.append(f.cpu())
             all_labels.extend(labels.numpy())
             all_imgs.append(imgs.cpu())
 
     return torch.cat(all_feats), np.array(all_labels), torch.cat(all_imgs)
 
 # ------------------------------
-# Flatten ALL patches (vectorized)
+# Flatten patches
 # ------------------------------
 def flatten_all_patches(f):
     n, c, h, w = f.shape
-    return f.permute(0, 2, 3, 1).reshape(n * h * w, c).numpy(), (n, h, w)
+    return f.permute(0,2,3,1).reshape(n*h*w, c).numpy(), (n,h,w)
 
 # ------------------------------
-# FAST scoring (vectorized)
+# PCA with tqdm
 # ------------------------------
-def score_images_fast(f, knn, top_k=0.1):
-    patches, (n, h, w) = flatten_all_patches(f)
-
-    print("Running KNN (batched)...")
-    dists, _ = knn.kneighbors(patches)
-    d = dists[:, 0]
-
-    # reshape back to per-image
-    d = d.reshape(n, h * w)
-
-    scores = []
-    for i in range(n):
-        img_d = d[i]
-        k = max(1, int(len(img_d) * top_k))
-        scores.append(np.mean(np.sort(img_d)[-k:]))
-
-    return np.array(scores)
+def pca_transform_with_progress(pca, data, batch_size=50000):
+    out = []
+    for i in tqdm(range(0, len(data), batch_size), desc="PCA transform"):
+        out.append(pca.transform(data[i:i+batch_size]))
+    return np.vstack(out)
 
 # ------------------------------
-# FAST heatmaps
+# Chunked KNN (tqdm)
 # ------------------------------
-def build_maps_fast(f, knn):
-    patches, (n, h, w) = flatten_all_patches(f)
-
-    dists, _ = knn.kneighbors(patches)
-    d = dists[:, 0]
-
-    return d.reshape(n, h, w)
-
-# ------------------------------
-# Output paths
-# ------------------------------
-def get_output_paths():
-    model_graph_dir = os.path.join(config.GRAPHS_DIR, MODEL_NAME)
-    samples_dir = os.path.join(model_graph_dir, "samples")
-    os.makedirs(model_graph_dir, exist_ok=True)
-    os.makedirs(samples_dir, exist_ok=True)
-
-    return {
-        "model_graph_dir": model_graph_dir,
-        "samples_dir": samples_dir,
-    }
-
-# ------------------------------
-# Save heatmaps
-# ------------------------------
-def save_heatmaps(images, maps, samples_dir):
-    for i in range(min(10, len(images))):
-        img = images[i][0].numpy()
-        amap = maps[i]
-
-        amap = (amap - amap.min()) / (amap.max() - amap.min() + 1e-8)
-        amap = cv2.resize(amap, (img.shape[1], img.shape[0]))
-
-        heat = cv2.applyColorMap((amap * 255).astype(np.uint8), cv2.COLORMAP_JET)
-        img_rgb = np.stack([img] * 3, axis=-1)
-
-        overlay = (0.6 * img_rgb + 0.4 * heat).astype(np.uint8)
-        out_path = os.path.join(samples_dir, f"heatmap_sample_{i}.png")
-        cv2.imwrite(out_path, overlay)
+def knn_with_progress(knn, patches, batch_size=50000):
+    all_dists = []
+    for i in tqdm(range(0, len(patches), batch_size), desc="KNN scoring"):
+        batch = patches[i:i+batch_size]
+        dists, _ = knn.kneighbors(batch)
+        all_dists.append(dists[:,0])
+    return np.concatenate(all_dists)
 
 # ------------------------------
 # MAIN
 # ------------------------------
 if __name__ == "__main__":
 
-    paths = get_output_paths()
+    start_total = time.time()
 
+    print("Loading data...")
     train_loader, test_loader, normal_idx = dataloader(
         train_path=config.TRAIN_PATH,
         test_path=config.TEST_PATH,
         img_size=config.IMG_SIZE,
-        n_train_normal=config.N_TRAIN_NORMAL,
-        n_test_normal=config.N_TEST_NORMAL,
-        n_test_anomaly_per_class=config.N_TEST_ANOMALY_PER_CLASS,
-        batch_size=config.BATCH_SIZE,
-        num_workers=config.NUM_WORKERS,
+        n_train_normal=20000,          # reduced for speed
+        n_test_normal=3000,
+        n_test_anomaly_per_class=200,
+        batch_size=64,
+        num_workers=4,
     )
 
-    model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1).to(config.DEVICE)
+    model = models.resnet18(
+        weights=models.ResNet18_Weights.IMAGENET1K_V1
+    ).to(config.DEVICE)
     model.eval()
 
     model.layer2.register_forward_hook(hook("layer2"))
     model.layer3.register_forward_hook(hook("layer3"))
 
+    # ------------------------------
+    # Feature extraction
+    # ------------------------------
     print("Extracting features...")
     train_f, _, _ = extract_features(train_loader, model)
     test_f, test_labels, test_imgs = extract_features(test_loader, model)
 
     y_true = np.array([0 if l == normal_idx else 1 for l in test_labels])
 
+    # ------------------------------
+    # Memory bank
+    # ------------------------------
     print("Building memory bank...")
     mem, _ = flatten_all_patches(train_f)
 
-    # SUBSAMPLE (BIG SPEED BOOST)
-    mem = mem[np.random.choice(len(mem), int(0.05 * len(mem)), replace=False)]
+    print("Subsampling memory...")
+    mem = mem[np.random.choice(len(mem), int(0.01 * len(mem)), replace=False)]
 
+    # ------------------------------
+    # PCA
+    # ------------------------------
+    print("Applying PCA...")
+    pca = PCA(n_components=64)
+    mem = pca.fit_transform(mem)
+
+    # ------------------------------
+    # KNN
+    # ------------------------------
+    print("Fitting KNN...")
     knn = NearestNeighbors(n_neighbors=1, n_jobs=-1)
     knn.fit(mem)
 
-    print("Scoring (FAST)...")
-    train_scores = score_images_fast(train_f, knn)
-    test_scores = score_images_fast(test_f, knn)
+    # ------------------------------
+    # TEST SCORING
+    # ------------------------------
+    print("Preparing test patches...")
+    test_patches, (n,h,w) = flatten_all_patches(test_f)
 
-    plot_loss(train_scores.tolist(), "loss.png", MODEL_NAME)
+    print("Applying PCA to test...")
+    test_patches = pca_transform_with_progress(pca, test_patches)
 
-    thresh = np.percentile(train_scores, 95)
-    preds = (test_scores > thresh).astype(int)
+    print("Running KNN...")
+    d = knn_with_progress(knn, test_patches)
 
-    precision, recall, f1, _ = precision_recall_fscore_support(
-        y_true, preds, average="binary", zero_division=0
-    )
+    d = d.reshape(n, h*w)
 
-    auc_roc = roc_auc_score(y_true, test_scores)
-    auc_pr = average_precision_score(y_true, test_scores)
+    print("Aggregating scores...")
+    scores = []
+    for i in tqdm(range(n), desc="Aggregating"):
+        scores.append(np.mean(d[i]))
+    scores = np.array(scores)
+
+    # ------------------------------
+    # Metrics
+    # ------------------------------
+    thresh = np.percentile(scores, 95)
+    preds = (scores > thresh).astype(int)
 
     print("\n=== RESULTS ===")
     print(classification_report(y_true, preds))
+
+    auc_roc = roc_auc_score(y_true, scores)
+    auc_pr = average_precision_score(y_true, scores)
+
     print(f"AUC ROC: {auc_roc:.4f}")
     print(f"AUC PR: {auc_pr:.4f}")
 
@@ -212,10 +210,7 @@ if __name__ == "__main__":
     plot_confusion_matrix(
         cm,
         ["Normal", "Anomaly"],
-        precision,
-        recall,
-        f1,
-        0,
+        0,0,0,0,
         auc_roc,
         auc_pr,
         "cm.png",
@@ -223,14 +218,37 @@ if __name__ == "__main__":
     )
 
     plot_error_distribution(
-        train_scores,
-        test_scores[y_true == 0],
-        test_scores[y_true == 1],
+        scores,
+        scores[y_true == 0],
+        scores[y_true == 1],
         thresh,
         "dist.png",
         MODEL_NAME
     )
 
+    # ------------------------------
+    # Heatmaps
+    # ------------------------------
     print("Generating heatmaps...")
-    maps = build_maps_fast(test_f, knn)
-    save_heatmaps(test_imgs, maps, paths["samples_dir"])
+    maps = d.reshape(n, h, w)
+
+    os.makedirs(config.GRAPHS_DIR, exist_ok=True)
+
+    for i in tqdm(range(min(10, len(test_imgs))), desc="Saving heatmaps"):
+        img = test_imgs[i][0].numpy()
+        amap = maps[i]
+
+        amap = (amap - amap.min()) / (amap.max() - amap.min() + 1e-8)
+        amap = cv2.resize(amap, (img.shape[1], img.shape[0]))
+
+        heat = cv2.applyColorMap((amap * 255).astype(np.uint8), cv2.COLORMAP_JET)
+        img_rgb = np.stack([img]*3, axis=-1)
+
+        overlay = (0.6 * img_rgb + 0.4 * heat).astype(np.uint8)
+
+        cv2.imwrite(
+            os.path.join(config.GRAPHS_DIR, f"heatmap_{i}.png"),
+            overlay
+        )
+
+    print(f"\nTOTAL TIME: {time.time() - start_total:.2f} sec")
