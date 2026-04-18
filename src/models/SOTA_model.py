@@ -204,7 +204,7 @@ def collect_test_scores(model, loader, ref_feat, test_normal_idx):
             scores.extend(s)
             labels_all.extend(labels.numpy())
 
-    y_true = np.array([0 if l == test_normal_idx else 1 for l in labels_all])
+    y_true = np.array([1 if l == test_normal_idx else 0 for l in labels_all])
     return np.array(scores), y_true
 
 
