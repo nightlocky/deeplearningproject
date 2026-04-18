@@ -17,8 +17,6 @@ from sklearn.metrics import (
     average_precision_score
 )
 from sklearn.model_selection import train_test_split
-import matplotlib.pyplot as plt
-from src import config
 try:
     from tqdm import tqdm
 except ImportError:
@@ -122,7 +120,6 @@ if __name__ == "__main__":
             model.train()
             batch_losses = []
             
-            # Wrapped the inner loop with tqdm for progress visualization
             loop = tqdm(train_loader, desc=f"Epoch [{epoch+1}/{EPOCHS}]", leave=False)
             
             for images, _ in loop:
@@ -212,12 +209,10 @@ if __name__ == "__main__":
 
         precision, recall, final_f1, _ = precision_recall_fscore_support(test_labels, test_preds, average='binary', zero_division=0)
         
-        # Calculate Specificity (True Negative Rate)
         cm = confusion_matrix(test_labels, test_preds)
         tn, fp, fn, tp = cm.ravel()
         specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
         
-        # Calculate AUC ROC and AUC PR using continuous error scores
         auc_roc = roc_auc_score(test_labels, test_errors)
         auc_pr = average_precision_score(test_labels, test_errors)
 

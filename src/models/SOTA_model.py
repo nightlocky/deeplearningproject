@@ -173,7 +173,6 @@ if __name__ == "__main__":
     print("Scoring test set...")
     test_scores, test_maps = compute_patch_distances(test_f, memory_bank)
 
-    # PatchCore uses the normal training distribution to set the threshold.
     thresh = np.percentile(train_scores, 95)
     preds = (test_scores > thresh).astype(int)
 

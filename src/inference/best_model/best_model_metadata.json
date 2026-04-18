@@ -15,8 +15,8 @@
     "activation": "sigmoid",
     "pooling": "AdaptiveAvgPool2d((1, 1))",
     "latent_dim": 2048,
-    "mlp_hidden_layers": [256, 64],
-    "mlp_dropout": 0.3
+    "mlp_hidden_layers": [512, 256, 128, 64],
+    "mlp_dropout": 0.1
   },
   "preprocessing": {
     "image_size": 224,
@@ -40,6 +40,6 @@
   },
   "notes": [
     "Saved model files are colocated with this metadata inside src/inference/best_model.",
-    "This metadata reflects the MLflow-winning configuration: MLP/256_64_drop_0.3."
+    "This metadata reflects the current final saved configuration used in the README."
   ]
 }

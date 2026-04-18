@@ -4,7 +4,6 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
-import seaborn as sns
 import matplotlib.pyplot as plt
 import segmentation_models_pytorch as smp
 from sklearn.metrics import confusion_matrix, precision_recall_fscore_support, roc_auc_score, average_precision_score

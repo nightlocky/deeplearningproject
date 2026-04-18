@@ -12,11 +12,11 @@ The project uses OCT images with one normal class and multiple anomaly classes.
 
 The experiments are based on the public OCT2017 retinal dataset, but the repository uses a modified version of the original split. In particular, the last `9750` normal images from the original training split were moved into the test-side normal pool so that the final evaluation uses a larger held-out set of normal scans.
 
-| Split      |   Normal | DRUSEN | DME | CNV |
-| ---------- | -------: | -----: | --: | --: |
-| Train      | 40, 000 |      0 |   0 |   0 |
-| Test       |    5,000 |     75 |  75 |  75 |
-| Validation |    5,000 |     75 |  75 |  75 |
+| Split      | Normal | DRUSEN | DME | CNV |
+| ---------- | -----: | -----: | --: | --: |
+| Train      | 40,000 |      0 |   0 |   0 |
+| Test       |  5,000 |     75 |  75 |  75 |
+| Validation |  5,000 |     75 |  75 |  75 |
 
 The dataset is not included in this repository due to storage restrictions. Before running the code, place the OCT dataset under the paths expected by [src/config.py](C:/Users/anged/Desktop/deeplearningproject/src/config.py):
 
@@ -145,6 +145,11 @@ The final best-performing configuration from this tuning process was:
 - MLP dropout: `0.1`
 - random seed: `42`
 
+These values describe the final saved reproducible model currently stored in [src/inference/best_model](C:/Users/anged/Desktop/deeplearningproject/src/inference/best_model). They should be distinguished from the wider Phase 3 search space, where the tuning script evaluates multiple candidate MLP architectures and dropout settings:
+
+- `MLP_ARCHITECTURES = [[1024, 512, 256], [1024, 256], [512, 256, 128, 64], [256, 64]]`
+- `MLP_DROPOUTS = [0.1, 0.3, 0.5]`
+
 The training workflow is phase-based:
 
 1. Set `CURRENT_PHASE = 1` to test candidate U-Net backbones.
@@ -224,3 +229,4 @@ Install dependencies with:
 ```bash
 pip install -r requirements.txt
 ```
+

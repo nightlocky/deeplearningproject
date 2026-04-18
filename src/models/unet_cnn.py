@@ -217,7 +217,6 @@ if __name__ == "__main__":
         cnn_optimizer = optim.Adam(cnn.parameters(), lr=1e-3)
         cnn_criterion = nn.BCELoss()
         
-        # Restored to strictly use the naturally imbalanced validation data
         cnn_loader = DataLoader(
             TensorDataset(val_maps, torch.tensor(val_bin).float()), 
             batch_size=32, shuffle=True
@@ -287,7 +286,6 @@ if __name__ == "__main__":
             model_name=MODEL_NAME
         ))
 
-        # --- Sample Visualization Function ---
         def save_sample_visualization(orig, recon, diff, true_bin, pred_bin, score, class_id, save_name):
             status = "Correct" if true_bin == pred_bin else "Incorrect"
             title = f"Original Class ID: {int(class_id)} | True Binary: {true_bin} | Pred Binary: {pred_bin} ({status})"
@@ -302,7 +300,6 @@ if __name__ == "__main__":
                 title=title,
             )
 
-        # Log visual heatmaps for predictions
         idx_tn = np.where((test_bin == 0) & (final_preds == 0))[0]
         if len(idx_tn) > 0:
             i = idx_tn[0]
@@ -323,7 +320,6 @@ if __name__ == "__main__":
                     f"worst_fn_{rank+1}_class_{int(test_raw[i])}.png"
                 ))
 
-        # --- Image of the Table Breakdown ---
         fig, ax = plt.subplots(figsize=(10, 4))
         ax.axis('tight')
         ax.axis('off')

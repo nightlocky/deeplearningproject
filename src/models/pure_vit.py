@@ -16,7 +16,6 @@ from sklearn.metrics import (
     roc_auc_score,
     average_precision_score
 )
-import matplotlib.pyplot as plt
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
@@ -25,7 +24,7 @@ sys.path.append(parent_dir)
 
 from src import config
 from src.dataLoader.data_loader import dataloader
-from src.helper.visualization_helper import plot_loss, plot_error_distribution, plot_confusion_matrix, plot_anomaly_comparison
+from src.helper.visualization_helper import plot_error_distribution, plot_confusion_matrix
 from src.helper.mlflow_helper import MLFlowTracker
 
 # ---------------------------------------------------------
@@ -84,10 +83,8 @@ if __name__ == "__main__":
         
         train_features = np.concatenate(train_features)
         
-        # Calculate the Centroid (mean embedding of all normal training data)
         normal_center = np.mean(train_features, axis=0)
         
-        # Calculate training distances to set a threshold
         train_distances = np.linalg.norm(train_features - normal_center, axis=1)
         
         # Set threshold at the 95th percentile of normal training distances
@@ -113,15 +110,12 @@ if __name__ == "__main__":
         y_true = [0 if l == normal_idx else 1 for l in test_labels_raw]
         y_pred = [1 if d > THRESHOLD else 0 for d in test_distances]
 
-        # Calculate standard classification metrics
         precision, recall, f1, _ = precision_recall_fscore_support(y_true, y_pred, average='binary', zero_division=0)
         
-        # Calculate Specificity (True Negative Rate)
         cm = confusion_matrix(y_true, y_pred)
         tn, fp, fn, tp = cm.ravel()
         specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
         
-        # Calculate AUC metrics using the continuous centroid distances
         auc_roc = roc_auc_score(y_true, test_distances)
         auc_pr = average_precision_score(y_true, test_distances)
 

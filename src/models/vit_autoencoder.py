@@ -105,9 +105,7 @@ def extract_features(loader, vit_model, desc):
             labels.extend(batch_labels.numpy())
     return torch.cat(features), np.array(labels)
 
-# =========================================================
-# EXECUTION BLOCK
-# =========================================================
+
 if __name__ == "__main__":
     
     # ---------------------------------------------------------
@@ -274,7 +272,6 @@ if __name__ == "__main__":
         # ---------------------------------------------------------
         # 8. Deep Analysis: Heatmaps of Top 10 & Worst 10
         # ---------------------------------------------------------
-        # Fetch raw images from the dataset for visualization
         raw_imgs, _ = next(iter(DataLoader(test_loader.dataset, batch_size=len(test_loader.dataset))))
         
         generate_anomaly_analysis(

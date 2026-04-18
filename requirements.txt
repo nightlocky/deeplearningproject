@@ -9,3 +9,4 @@ tqdm
 torchmetrics
 segmentation-models-pytorch
 Pillow
+opencv-python

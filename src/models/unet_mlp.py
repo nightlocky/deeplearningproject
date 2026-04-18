@@ -248,7 +248,6 @@ if __name__ == "__main__":
         v_probs = generate_mlp_predictions(mlp, val_latents)
         t_probs = generate_mlp_predictions(mlp, test_latents)
 
-        # Calibrate threshold on validation set
         thresholds = np.linspace(v_probs.min(), v_probs.max(), 100)
         best_f1, opt_thresh = 0, 0.5
         for t in thresholds:
@@ -309,19 +308,16 @@ if __name__ == "__main__":
                 title=title,
             )
 
-        # --- 1. Normal predicted as Normal ---
         idx_tn = np.where((test_bin == 0) & (final_preds == 0))[0]
         if len(idx_tn) > 0:
             i = idx_tn[0]
             tracker.log_artifact(save_sample_visualization(test_origs[i], test_recons[i], test_maps[i], test_bin[i], final_preds[i], t_probs[i], test_raw[i], "normal_pred_normal.png"))
 
-        # --- 2. Normal predicted as Anomaly ---
         idx_fp = np.where((test_bin == 0) & (final_preds == 1))[0]
         if len(idx_fp) > 0:
             i = idx_fp[0]
             tracker.log_artifact(save_sample_visualization(test_origs[i], test_recons[i], test_maps[i], test_bin[i], final_preds[i], t_probs[i], test_raw[i], "normal_pred_anomaly.png"))
 
-        # --- 3. Worst 5 Disease predicted as Normal (False Negatives) ---
         idx_fn = np.where((test_bin == 1) & (final_preds == 0))[0]
         if len(idx_fn) > 0:
             worst_fn_indices = idx_fn[np.argsort(t_probs[idx_fn])][:5]
@@ -332,7 +328,6 @@ if __name__ == "__main__":
                     f"worst_fn_{rank+1}_class_{int(test_raw[i])}.png"
                 ))
 
-        # --- Image of the Table Breakdown ---
         fig, ax = plt.subplots(figsize=(10, 4))
         ax.axis('tight')
         ax.axis('off')
