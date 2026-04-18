@@ -1,25 +1,26 @@
 """
-Module: dra_patchcore_style.py
-Description: DRA-style anomaly detection model aligned with PatchCore pipeline.
+PatchCore SOTA baseline with:
+- PR / ROC curves
+- Heatmaps for OCT anomaly visualization
 """
 
 import os
 import sys
-import copy
 import torch
-import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
 import numpy as np
-from torch.utils.data import DataLoader, Subset
+import torch.nn.functional as F
+import cv2
+
+from torchvision import models
+from tqdm import tqdm
+from sklearn.neighbors import NearestNeighbors
 from sklearn.metrics import (
     classification_report,
     confusion_matrix,
     precision_recall_fscore_support,
     roc_auc_score,
-    average_precision_score
+    average_precision_score,
 )
-from tqdm import tqdm
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
@@ -31,305 +32,259 @@ from src.helper.visualization_helper import (
     plot_loss,
     plot_error_distribution,
     plot_confusion_matrix,
-    generate_anomaly_analysis,
 )
 from src.helper.mlflow_helper import MLFlowTracker
 
+MODEL_NAME = "patchcore"
 
-# ---------------------------------------------------------
-# 1. Model
-# ---------------------------------------------------------
-class Backbone(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Conv2d(1, 32, 3, stride=2, padding=1), nn.ReLU(),
-            nn.Conv2d(32, 64, 3, stride=2, padding=1), nn.ReLU(),
-            nn.Conv2d(64, 128, 3, stride=2, padding=1), nn.ReLU(),
-            nn.Conv2d(128, 256, 3, stride=2, padding=1), nn.ReLU()
-        )
+# ------------------------------
+# Feature hooks
+# ------------------------------
+features = {}
 
-    def forward(self, x):
-        return self.net(x)
+def hook(name):
+    def fn(module, input, output):
+        features[name] = output.detach()
+    return fn
 
+# ------------------------------
+# Feature extraction
+# ------------------------------
+def extract_features(loader, model):
+    all_feats, all_labels, all_imgs = [], [], []
 
-class Head(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Conv2d(256, 128, 3, padding=1), nn.ReLU(),
-            nn.Conv2d(128, 32, 3, padding=1), nn.ReLU(),
-            nn.Conv2d(32, 1, 1)
-        )
-
-    def forward(self, x):
-        return self.net(x)
-
-
-class NormalHead(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.pool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Linear(256, 1)
-
-    def forward(self, x):
-        return self.fc(self.pool(x).flatten(1)).squeeze(1)
-
-
-class DRAModel(nn.Module):
-    def __init__(self, top_k=0.1):
-        super().__init__()
-        self.backbone = Backbone()
-        self.seen = Head()
-        self.pseudo = Head()
-        self.residual = Head()
-        self.normal = NormalHead()
-        self.top_k = top_k
-
-    def topk(self, x):
-        x = x.view(x.shape[0], -1)
-        k = max(1, int(x.shape[1] * self.top_k))
-        return torch.topk(x, k, dim=1)[0].mean(1)
-
-    def forward(self, x, ref_feat):
-        feat = self.backbone(x)
-
-        seen = self.topk(self.seen(feat))
-        pseudo = self.topk(self.pseudo(feat))
-        residual = self.topk(self.residual(feat - ref_feat))
-        normal = self.normal(feat)
-
-        return seen + pseudo + residual - normal
-
-
-# ---------------------------------------------------------
-# 2. Helpers
-# ---------------------------------------------------------
-def build_pseudo(x):
-    x = x.clone()
-    b, c, h, w = x.shape
-    for i in range(b):
-        ph, pw = h // 4, w // 4
-        y, x_ = np.random.randint(0, h-ph), np.random.randint(0, w-pw)
-        x[i, :, y:y+ph, x_:x_+pw] = torch.randn_like(x[i, :, y:y+ph, x_:x_+pw])
-    return x
-
-
-def compute_reference(model, loader, normal_idx):
-    model.eval()
-    feats = []
     with torch.no_grad():
-        for imgs, labels in loader:
+        for imgs, labels in tqdm(loader, desc="Extracting"):
             imgs = imgs.to(config.DEVICE)
-            labels = (labels == normal_idx)
-            if labels.sum() == 0:
-                continue
-            f = model.backbone(imgs[labels])
-            feats.append(f.mean(0, keepdim=True))
-    if not feats:
-        raise RuntimeError("No normal samples found to compute reference features.")
-    return torch.mean(torch.cat(feats), dim=0, keepdim=True)
+            imgs3 = imgs.repeat(1, 3, 1, 1)
+
+            _ = model(imgs3)
+
+            f2 = features["layer2"]
+            f3 = features["layer3"]
+
+            f2 = F.interpolate(f2, size=f3.shape[2:], mode="bilinear")
+            f = torch.cat([f2, f3], dim=1)
+            f = F.avg_pool2d(f, 3, 1, 1)
+
+            all_feats.append(f.cpu())
+            all_labels.extend(labels.numpy())
+            all_imgs.append(imgs.cpu())
+
+    return torch.cat(all_feats), np.array(all_labels), torch.cat(all_imgs)
+
+# ------------------------------
+# Flatten patches
+# ------------------------------
+def flatten_patches(f):
+    n, c, h, w = f.shape
+    return f.permute(0,2,3,1).reshape(n*h*w, c).numpy()
+
+# ------------------------------
+# Score images
+# ------------------------------
+def score_images(f, knn, top_k=0.1):
+    scores = []
+    n, c, h, w = f.shape
+
+    for i in tqdm(range(n), desc="Scoring"):
+        patches = f[i].permute(1,2,0).reshape(h*w, c).numpy()
+        dists, _ = knn.kneighbors(patches)
+        d = dists[:,0]
+
+        k = max(1, int(len(d)*top_k))
+        scores.append(np.mean(np.sort(d)[-k:]))
+
+    return np.array(scores)
+
+# ------------------------------
+# Heatmaps
+# ------------------------------
+def build_maps(f, knn):
+    maps = []
+    n, c, h, w = f.shape
+
+    for i in range(n):
+        patches = f[i].permute(1,2,0).reshape(h*w, c).numpy()
+        dists, _ = knn.kneighbors(patches)
+        maps.append(dists[:,0].reshape(h,w))
+
+    return np.array(maps)
+
+def get_output_paths():
+    model_graph_dir = os.path.join(config.GRAPHS_DIR, MODEL_NAME)
+    samples_dir = os.path.join(model_graph_dir, "samples")
+    os.makedirs(model_graph_dir, exist_ok=True)
+    os.makedirs(samples_dir, exist_ok=True)
+
+    return {
+        "model_graph_dir": model_graph_dir,
+        "samples_dir": samples_dir,
+    }
 
 
-def split_train_val_loader(train_loader, val_ratio=0.2, seed=42):
-    dataset = train_loader.dataset
-    n_samples = len(dataset)
-    if n_samples < 2:
-        raise ValueError("Need at least 2 training samples to split train/val.")
+def save_heatmaps(images, maps, samples_dir):
 
-    rng = np.random.default_rng(seed)
-    indices = np.arange(n_samples)
-    rng.shuffle(indices)
+    for i in range(min(10, len(images))):
+        img = images[i][0].numpy()
+        amap = maps[i]
 
-    val_size = max(1, int(n_samples * val_ratio))
-    val_size = min(val_size, n_samples - 1)
-    val_indices = indices[:val_size].tolist()
-    train_indices = indices[val_size:].tolist()
+        amap = (amap - amap.min()) / (amap.max() - amap.min() + 1e-8)
+        amap = cv2.resize(amap, (img.shape[1], img.shape[0]))
 
-    train_subset = Subset(dataset, train_indices)
-    val_subset = Subset(dataset, val_indices)
-    import os
-    print("script file:", os.path.abspath(__file__))
-    print("config file:", os.path.abspath(config.__file__))
-    print("TRAIN_PATH:", config.TRAIN_PATH)
-    print("TEST_PATH:", config.TEST_PATH)
+        heat = cv2.applyColorMap((amap*255).astype(np.uint8), cv2.COLORMAP_JET)
+        img_rgb = np.stack([img]*3, axis=-1)
 
-    train_split_loader = DataLoader(
-        train_subset,
-        batch_size=train_loader.batch_size,
-        shuffle=True,
-        num_workers=train_loader.num_workers,
-        pin_memory=True if torch.cuda.is_available() else False,
-        persistent_workers=True if train_loader.num_workers > 0 else False,
-    )
-
-    val_loader = DataLoader(
-        val_subset,
-        batch_size=train_loader.batch_size,
-        shuffle=False,
-        num_workers=train_loader.num_workers,
-        pin_memory=True if torch.cuda.is_available() else False,
-        persistent_workers=True if train_loader.num_workers > 0 else False,
-    )
-
-    return train_split_loader, val_loader
+        overlay = (0.6*img_rgb + 0.4*heat).astype(np.uint8)
+        out_path = os.path.join(samples_dir, f"heatmap_sample_{i}.png")
+        cv2.imwrite(out_path, overlay)
 
 
-def collect_val_with_pseudo_scores(model, loader, ref_feat):
-    scores, labels = [], []
-    model.eval()
-    with torch.no_grad():
-        for imgs, _ in loader:
-            imgs = imgs.to(config.DEVICE)
+def save_ranked_case_heatmaps(images, maps, scores, y_true, preds, threshold, samples_dir, top_n=5):
+    ranked_dir = os.path.join(samples_dir, "best_worst_cases")
+    os.makedirs(ranked_dir, exist_ok=True)
 
-            normal_scores = torch.sigmoid(model(imgs, ref_feat)).cpu().numpy()
-            pseudo_imgs = build_pseudo(imgs)
-            pseudo_scores = torch.sigmoid(model(pseudo_imgs, ref_feat)).cpu().numpy()
+    scores = np.asarray(scores)
+    y_true = np.asarray(y_true)
+    preds = np.asarray(preds)
 
-            scores.extend(normal_scores)
-            labels.extend(np.zeros(len(normal_scores), dtype=np.int32))
-            scores.extend(pseudo_scores)
-            labels.extend(np.ones(len(pseudo_scores), dtype=np.int32))
+    anomaly_conf = scores - threshold
+    normal_conf = threshold - scores
 
-    return np.array(scores), np.array(labels)
+    tp = np.where((y_true == 1) & (preds == 1))[0]
+    tn = np.where((y_true == 0) & (preds == 0))[0]
+    fp = np.where((y_true == 0) & (preds == 1))[0]
+    fn = np.where((y_true == 1) & (preds == 0))[0]
 
+    cases = [
+        ("best_hits_anomaly", tp, anomaly_conf, True),
+        ("worst_hits_anomaly", tp, anomaly_conf, False),
+        ("best_hits_normal", tn, normal_conf, True),
+        ("worst_hits_normal", tn, normal_conf, False),
+        ("best_misses_normal", fp, anomaly_conf, False),
+        ("worst_misses_normal", fp, anomaly_conf, True),
+        ("best_misses_anomaly", fn, normal_conf, False),
+        ("worst_misses_anomaly", fn, normal_conf, True),
+    ]
 
-def collect_test_scores(model, loader, ref_feat, test_normal_idx):
-    scores, labels_all = [], []
-    model.eval()
-    with torch.no_grad():
-        for imgs, labels in loader:
-            imgs = imgs.to(config.DEVICE)
-            s = torch.sigmoid(model(imgs, ref_feat)).cpu().numpy()
-            scores.extend(s)
-            labels_all.extend(labels.numpy())
+    for case_name, idxs, conf_values, descending in cases:
+        case_dir = os.path.join(ranked_dir, case_name)
+        os.makedirs(case_dir, exist_ok=True)
 
-    y_true = np.array([1 if l == test_normal_idx else 0 for l in labels_all])
-    return np.array(scores), y_true
+        if len(idxs) == 0:
+            continue
 
+        ranked = idxs[np.argsort(conf_values[idxs])]
+        if descending:
+            ranked = ranked[::-1]
 
-# =========================================================
-# EXECUTION
-# =========================================================
+        for rank, i in enumerate(ranked[:top_n]):
+            img = images[i][0].numpy()
+            amap = maps[i]
+
+            amap = (amap - amap.min()) / (amap.max() - amap.min() + 1e-8)
+            amap = cv2.resize(amap, (img.shape[1], img.shape[0]))
+            heat = cv2.applyColorMap((amap * 255).astype(np.uint8), cv2.COLORMAP_JET)
+            img_rgb = np.stack([img] * 3, axis=-1)
+            overlay = (0.6 * img_rgb + 0.4 * heat).astype(np.uint8)
+
+            out_path = os.path.join(
+                case_dir,
+                f"{rank:02d}_idx{i}_score{scores[i]:.4f}_true{int(y_true[i])}_pred{int(preds[i])}.png",
+            )
+            cv2.imwrite(out_path, overlay)
+
+# ------------------------------
+# MAIN
+# ------------------------------
 if __name__ == "__main__":
+
+    paths = get_output_paths()
 
     train_loader, test_loader, normal_idx = dataloader(
         train_path=config.TRAIN_PATH,
         test_path=config.TEST_PATH,
+        img_size=config.IMG_SIZE,
         n_train_normal=config.N_TRAIN_NORMAL,
         n_test_normal=config.N_TEST_NORMAL,
         n_test_anomaly_per_class=config.N_TEST_ANOMALY_PER_CLASS,
-        img_size=config.IMG_SIZE,
         batch_size=config.BATCH_SIZE,
         num_workers=config.NUM_WORKERS,
     )
 
-    if hasattr(test_loader.dataset, "dataset") and hasattr(test_loader.dataset.dataset, "class_to_idx"):
-        test_normal_idx = test_loader.dataset.dataset.class_to_idx["NORMAL"]
-    elif hasattr(test_loader.dataset, "class_to_idx"):
-        test_normal_idx = test_loader.dataset.class_to_idx["NORMAL"]
-    else:
-        test_normal_idx = normal_idx
+    model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1).to(config.DEVICE)
+    model.eval()
 
-    train_loader, val_loader = split_train_val_loader(train_loader, val_ratio=0.2, seed=42)
+    model.layer2.register_forward_hook(hook("layer2"))
+    model.layer3.register_forward_hook(hook("layer3"))
 
-    model = DRAModel().to(config.DEVICE)
-    optimizer = optim.Adam(model.parameters(), lr=1e-4)
+    print("Extracting features...")
+    train_f, _, _ = extract_features(train_loader, model)
+    test_f, test_labels, test_imgs = extract_features(test_loader, model)
 
-    tracker = MLFlowTracker(experiment_name="DRA_SOTA")
+    y_true = np.array([0 if l == normal_idx else 1 for l in test_labels])
 
-    with tracker:
-        train_losses = []
-        val_auc_pr_history = []
-        max_epochs = 50
-        patience = 8
-        best_val_auc_pr = -1.0
-        no_improve_count = 0
-        best_state = copy.deepcopy(model.state_dict())
+    print("Building memory bank...")
+    mem = flatten_patches(train_f)
+    mem = mem[np.random.choice(len(mem), int(0.1*len(mem)), replace=False)]
 
-        print("\nTraining DRA...")
-        for epoch in range(max_epochs):
-            model.train()
-            batch_losses = []
+    knn = NearestNeighbors(n_neighbors=1)
+    knn.fit(mem)
 
-            for imgs, labels in tqdm(train_loader):
-                imgs = imgs.to(config.DEVICE)
-                labels = (labels != normal_idx).float().to(config.DEVICE)
+    print("Scoring...")
+    train_scores = score_images(train_f, knn)
+    test_scores = score_images(test_f, knn)
 
-                normal_imgs = imgs[labels == 0]
-                if len(normal_imgs) == 0:
-                    continue
+    # PatchCore is non-parametric (no gradient training loop), so we log a
+    # score-proxy curve to keep visualization outputs consistent with other models.
+    plot_loss(train_scores.tolist(), "loss.png", MODEL_NAME)
 
-                ref_feat = model.backbone(normal_imgs).mean(0, keepdim=True)
+    thresh = np.percentile(train_scores, 95)
+    preds = (test_scores > thresh).astype(int)
 
-                scores = model(imgs, ref_feat)
-                loss_main = F.binary_cross_entropy_with_logits(scores, labels)
+    precision, recall, f1, _ = precision_recall_fscore_support(
+        y_true, preds, average="binary", zero_division=0
+    )
 
-                pseudo_imgs = build_pseudo(normal_imgs)
-                pseudo_scores = model(pseudo_imgs, ref_feat)
-                loss_pseudo = F.binary_cross_entropy_with_logits(
-                    pseudo_scores,
-                    torch.ones(len(pseudo_imgs)).to(config.DEVICE)
-                )
+    auc_roc = roc_auc_score(y_true, test_scores)
+    auc_pr = average_precision_score(y_true, test_scores)
 
-                loss = loss_main + loss_pseudo
+    print("\n=== RESULTS ===")
+    print(classification_report(y_true, preds))
+    print(f"AUC ROC: {auc_roc:.4f}")
+    print(f"AUC PR: {auc_pr:.4f}")
+    
 
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+    cm = confusion_matrix(y_true, preds)
+    tn, fp, fn, tp = cm.ravel()
 
-                batch_losses.append(loss.item())
+    specificity = tn / (tn + fp + 1e-8)
+    print(f"Specificity: {specificity:.4f}")
 
-            avg_loss = np.mean(batch_losses) if batch_losses else 0
-            train_losses.append(avg_loss)
-            ref_feat_val = compute_reference(model, train_loader, normal_idx)
-            val_scores, val_labels = collect_val_with_pseudo_scores(model, val_loader, ref_feat_val)
-            val_auc_pr = average_precision_score(val_labels, val_scores)
-            val_auc_pr_history.append(val_auc_pr)
 
-            print(f"Epoch {epoch+1}: loss={avg_loss:.4f} | val_auc_pr={val_auc_pr:.4f}")
+    plot_confusion_matrix(
+        cm,
+        ["Normal","Anomaly"],
+        precision,
+        recall,
+        f1,
+        0,
+        auc_roc,
+        auc_pr,
+        "cm.png",
+        MODEL_NAME
+    )
 
-            if val_auc_pr > best_val_auc_pr:
-                best_val_auc_pr = val_auc_pr
-                best_state = copy.deepcopy(model.state_dict())
-                no_improve_count = 0
-            else:
-                no_improve_count += 1
-                if no_improve_count >= patience:
-                    print(f"Early stopping at epoch {epoch+1} (best val_auc_pr={best_val_auc_pr:.4f}).")
-                    break
+    plot_error_distribution(
+        train_scores,
+        test_scores[y_true==0],
+        test_scores[y_true==1],
+        thresh,
+        "dist.png",
+        MODEL_NAME
+    )
 
-        model.load_state_dict(best_state)
-
-        # ---------------------------------------------------------
-        # Evaluation without test leakage
-        # ---------------------------------------------------------
-        model.eval()
-        ref_feat = compute_reference(model, train_loader, normal_idx)
-
-        val_s, val_y = collect_val_with_pseudo_scores(model, val_loader, ref_feat)
-        test_s, test_y = collect_test_scores(model, test_loader, ref_feat, test_normal_idx)
-        print(f"test_y bincount [normal(0), anomaly(1)]: {np.bincount(test_y, minlength=2)}")
-
-        best_t, best_f1 = 0, 0
-        for t in np.linspace(min(val_s), max(val_s), 500):
-            preds = (val_s > t).astype(int)
-            _, _, f1, _ = precision_recall_fscore_support(val_y, preds, average='binary', zero_division=0)
-            if f1 > best_f1:
-                best_f1, best_t = f1, t
-
-        test_preds = (np.array(test_s) > best_t).astype(int)
-
-        precision, recall, f1, _ = precision_recall_fscore_support(test_y, test_preds, average='binary', zero_division=0)
-        cm = confusion_matrix(test_y, test_preds)
-
-        auc_roc = roc_auc_score(test_y, test_s)
-        auc_pr = average_precision_score(test_y, test_s)
-        report = classification_report(test_y, test_preds, output_dict=True, zero_division=0)
-
-        print("\nFINAL RESULTS")
-        print(f"Support class 0: {int(report['0']['support'])}")
-        print(f"Support class 1: {int(report['1']['support'])}")
-        print(classification_report(test_y, test_preds, zero_division=0))
-        print(f"Best threshold from val: {best_t:.4f}")
-        print(f"AUC ROC: {auc_roc:.4f} | AUC PR: {auc_pr:.4f}")
+    print("Generating heatmaps...")
+    maps = build_maps(test_f, knn)
+    save_heatmaps(test_imgs, maps, paths["samples_dir"])
+    save_ranked_case_heatmaps(test_imgs, maps, test_scores, y_true, preds, thresh, paths["samples_dir"], top_n=5)
