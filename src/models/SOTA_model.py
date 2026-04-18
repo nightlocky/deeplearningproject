@@ -36,7 +36,6 @@ from src.dataLoader.data_loader import dataloader
 from src.helper.visualization_helper import (
     plot_confusion_matrix,
     plot_error_distribution,
-    plot_loss,
 )
 
 MODEL_NAME = "SOTA_model"
@@ -193,13 +192,6 @@ if __name__ == "__main__":
     tn, fp, fn, tp = cm.ravel()
     specificity = tn / (tn + fp + 1e-8)
     print(f"Specificity: {specificity:.4f}")
-
-    # PatchCore has no optimization loss, so log the train-score curve as a proxy plot.
-    plot_loss(
-        train_scores.tolist(),
-        os.path.join(paths["model_graph_dir"], "train_score_proxy_curve.png"),
-        MODEL_NAME,
-    )
 
     plot_confusion_matrix(
         cm,

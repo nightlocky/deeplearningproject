@@ -43,7 +43,6 @@ def dataloader(
     anomaly_count = 0
     for lbl, indices in test_class_indices.items():
         if lbl != normal_idx:
-            # Grab the specific amount for this specific disease
             selected_indices = indices[:n_test_anomaly_per_class]
             test_anom_idx.extend(selected_indices)
             anomaly_count += len(selected_indices)
