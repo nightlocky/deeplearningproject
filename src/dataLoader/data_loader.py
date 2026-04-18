@@ -79,9 +79,8 @@ def dataloader(
         persistent_workers=True if num_workers > 0 else False
     )
     
-    actual_per_class = anomaly_count // max(len(test_class_indices) - 1, 1)
     print(f"--- Data Summary ---")
-    print(f"Training on: {len(train_subset)} Normal images (requested {n_train_normal}, dataset has {len(train_norm_idx)})")
-    print(f"Testing on:  {len(test_norm_idx)} Normal + {anomaly_count} Anomaly images ({len(test_class_indices)-1} anomaly classes * {actual_per_class} actual, requested {n_test_anomaly_per_class})")
+    print(f"Training on: {len(train_subset)} Normal images")
+    print(f"Testing on:  {len(test_norm_idx)} Normal + {anomaly_count} Anomaly images ({len(test_class_indices)-1} classes * {n_test_anomaly_per_class})")
     
     return train_loader, test_loader, normal_idx
