@@ -6,6 +6,10 @@ This project explores anomaly detection on OCT retinal images using several deep
 
 The main goal is to distinguish normal OCT scans from pathological scans by learning patterns from normal data and then identifying abnormal deviations at test time. The repository includes both baseline models and a tuning pipeline for selecting the strongest final model.
 
+## Final Report
+
+The final project report can be accessed here: [Deep Learning Report](./Deep_learning_report.pdf)
+
 ## Dataset
 
 The project uses OCT images with one normal class and multiple anomaly classes.
@@ -229,4 +233,3 @@ Install dependencies with:
 ```bash
 pip install -r requirements.txt
 ```
-
