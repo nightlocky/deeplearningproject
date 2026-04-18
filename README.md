@@ -8,7 +8,7 @@ The main goal is to distinguish normal OCT scans from pathological scans by lear
 
 ## Final Report
 
-The final project report can be accessed here: [Deep Learning Report](./Deep_learning_report.pdf)
+The final project report can be accessed here: [Deep Learning Report](./final_report.pdf)
 
 ## Dataset
 
