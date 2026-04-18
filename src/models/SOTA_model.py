@@ -124,7 +124,7 @@ if __name__ == "__main__":
         n_test_normal=config.N_TEST_NORMAL,
         n_test_anomaly_per_class=config.N_TEST_ANOMALY_PER_CLASS,
         batch_size=64,
-        num_workers=4,
+        num_workers=16,
     )
 
     model = models.resnet18(
