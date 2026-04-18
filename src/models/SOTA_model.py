@@ -148,6 +148,11 @@ def split_train_val_loader(train_loader, val_ratio=0.2, seed=42):
 
     train_subset = Subset(dataset, train_indices)
     val_subset = Subset(dataset, val_indices)
+    import os
+    print("script file:", os.path.abspath(__file__))
+    print("config file:", os.path.abspath(config.__file__))
+    print("TRAIN_PATH:", config.TRAIN_PATH)
+    print("TEST_PATH:", config.TEST_PATH)
 
     train_split_loader = DataLoader(
         train_subset,
