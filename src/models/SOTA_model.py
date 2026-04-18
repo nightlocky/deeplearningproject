@@ -189,7 +189,7 @@ def collect_val_with_pseudo_scores(model, loader, ref_feat):
     return np.array(scores), np.array(labels)
 
 
-def collect_test_scores(model, loader, ref_feat, normal_idx):
+def collect_test_scores(model, loader, ref_feat, test_normal_idx):
     scores, labels_all = [], []
     model.eval()
     with torch.no_grad():
@@ -199,7 +199,7 @@ def collect_test_scores(model, loader, ref_feat, normal_idx):
             scores.extend(s)
             labels_all.extend(labels.numpy())
 
-    y_true = np.array([0 if l == normal_idx else 1 for l in labels_all])
+    y_true = np.array([0 if l == test_normal_idx else 1 for l in labels_all])
     return np.array(scores), y_true
 
 
@@ -218,6 +218,13 @@ if __name__ == "__main__":
         batch_size=config.BATCH_SIZE,
         num_workers=config.NUM_WORKERS,
     )
+
+    if hasattr(test_loader.dataset, "dataset") and hasattr(test_loader.dataset.dataset, "class_to_idx"):
+        test_normal_idx = test_loader.dataset.dataset.class_to_idx["NORMAL"]
+    elif hasattr(test_loader.dataset, "class_to_idx"):
+        test_normal_idx = test_loader.dataset.class_to_idx["NORMAL"]
+    else:
+        test_normal_idx = normal_idx
 
     train_loader, val_loader = split_train_val_loader(train_loader, val_ratio=0.2, seed=42)
 
@@ -296,7 +303,7 @@ if __name__ == "__main__":
         ref_feat = compute_reference(model, train_loader, normal_idx)
 
         val_s, val_y = collect_val_with_pseudo_scores(model, val_loader, ref_feat)
-        test_s, test_y = collect_test_scores(model, test_loader, ref_feat, normal_idx)
+        test_s, test_y = collect_test_scores(model, test_loader, ref_feat, test_normal_idx)
         print(f"test_y bincount [normal(0), anomaly(1)]: {np.bincount(test_y, minlength=2)}")
 
         best_t, best_f1 = 0, 0

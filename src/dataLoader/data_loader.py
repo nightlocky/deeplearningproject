@@ -32,6 +32,7 @@ def dataloader(
     full_test_ds = datasets.ImageFolder(root=test_path, transform=transform)
     
     normal_idx = full_train_ds.class_to_idx['NORMAL']
+    test_normal_idx = full_test_ds.class_to_idx['NORMAL']
     print(f"Train class_to_idx: {full_train_ds.class_to_idx}")
     print(f"Test class_to_idx:  {full_test_ds.class_to_idx}")
 
@@ -45,16 +46,18 @@ def dataloader(
         test_class_indices[lbl].append(i)
 
     # Extract test normal indices
-    test_norm_idx = test_class_indices[normal_idx][:n_test_normal]
+    test_norm_idx = test_class_indices[test_normal_idx][:n_test_normal]
 
     # Extract exactly N anomaly images from EACH disease class
     test_anom_idx = []
+    requested_anomaly_total = 0
     anomaly_count = 0
     for lbl, indices in test_class_indices.items():
-        if lbl != normal_idx:
+        if lbl != test_normal_idx:
             # Grab the specific amount for this specific disease
             selected_indices = indices[:n_test_anomaly_per_class]
             test_anom_idx.extend(selected_indices)
+            requested_anomaly_total += n_test_anomaly_per_class
             anomaly_count += len(selected_indices)
 
     print(f"Selected test NORMAL count: {len(test_norm_idx)}")
@@ -85,7 +88,10 @@ def dataloader(
     )
     
     print(f"--- Data Summary ---")
-    print(f"Training on: {len(train_subset)} Normal images")
-    print(f"Testing on:  {len(test_norm_idx)} Normal + {anomaly_count} Anomaly images ({len(test_class_indices)-1} classes * {n_test_anomaly_per_class})")
+    print(f"Training on: {len(train_subset)} Normal images (requested={n_train_normal})")
+    print(f"Testing on:  {len(test_norm_idx)} Normal (requested={n_test_normal}) + {anomaly_count} Anomaly (requested={requested_anomaly_total})")
+    print(f"Anomaly classes: {len(test_class_indices)-1}, requested per class: {n_test_anomaly_per_class}")
+    if normal_idx != test_normal_idx:
+        print(f"Warning: NORMAL index differs between train ({normal_idx}) and test ({test_normal_idx}).")
     
     return train_loader, test_loader, normal_idx
